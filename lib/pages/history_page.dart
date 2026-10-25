@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -16,15 +18,27 @@ class HistoryPage extends StatefulWidget {
 
 class _HistoryPageState extends State<HistoryPage> {
   bool _loading = true;
-  bool _syncing = false;
   String? _error;
   Map<String, dynamic> _data = {};
   String? _selectedDate;
+  Timer? _liveTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // In-play scores and the match clock are refreshed every minute; the
+    // backend also settles them on every /api/history read.
+    _liveTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _load(silent: true),
+    );
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
   }
 
   String get _today {
@@ -35,21 +49,31 @@ class _HistoryPageState extends State<HistoryPage> {
     return '$y-$mo-$d';
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool silent = false, bool forceLive = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
-      final data = await widget.client.get('/api/history');
+      final data = await widget.client.get(
+        '/api/history${forceLive ? '?refresh=1' : ''}',
+      );
+      if (!mounted) return;
+      final dates = (data['dates'] as List? ?? const []).whereType<Map>();
+      final available = dates.map((d) => d['date']?.toString()).toSet();
       setState(() {
         _data = data;
-        _selectedDate = _pickDefault(data['dates'] as List? ?? const []);
+        // Keep the user's chosen date across auto/pull refreshes.
+        if (_selectedDate == null || !available.contains(_selectedDate)) {
+          _selectedDate = _pickDefault(data['dates'] as List? ?? const []);
+        }
       });
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted && !silent) setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (!silent && mounted) setState(() => _loading = false);
     }
   }
 
@@ -60,21 +84,6 @@ class _HistoryPageState extends State<HistoryPage> {
       if (d is Map && d['date'] == today) return today;
     }
     return dates.first is Map ? (dates.first as Map)['date']?.toString() : null;
-  }
-
-  Future<void> _sync() async {
-    setState(() => _syncing = true);
-    try {
-      await widget.client.post('/api/history/sync');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('同步失败：$e')));
-      }
-    } finally {
-      if (mounted) setState(() => _syncing = false);
-    }
-    await _load();
   }
 
   @override
@@ -97,8 +106,9 @@ class _HistoryPageState extends State<HistoryPage> {
         ),
       );
     }
-    final dates = (_data['dates'] as List? ?? const []).whereType<Map>().toList();
-    final sync = _data['sync'] as Map<String, dynamic>? ?? const {};
+    final dates = (_data['dates'] as List? ?? const [])
+        .whereType<Map>()
+        .toList();
     final current = dates.firstWhere(
       (d) => d['date'] == _selectedDate,
       orElse: () => dates.isEmpty ? {} : dates.first,
@@ -109,23 +119,15 @@ class _HistoryPageState extends State<HistoryPage> {
         .toList();
 
     return RefreshIndicator(
-      onRefresh: _load,
+      // Pull to refresh also forces an immediate in-play score sync.
+      onRefresh: () => _load(silent: true, forceLive: true),
       child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(12),
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '已检查 ${sync['checked'] ?? 0} 场 · 同步 ${sync['updated'] ?? 0} 场',
-                  style: const TextStyle(color: muted, fontSize: 12),
-                ),
-              ),
-              FilledButton.tonal(
-                onPressed: _syncing ? null : _sync,
-                child: Text(_syncing ? '同步中…' : '同步赛果'),
-              ),
-            ],
+          const Text(
+            '进行中的比赛每 1 分钟自动更新比分和比赛时间，下拉可立即刷新。',
+            style: TextStyle(color: muted, fontSize: 12),
           ),
           const SizedBox(height: 10),
           if (dates.isNotEmpty) _dateChips(dates),
@@ -170,17 +172,29 @@ class _HistoryPageState extends State<HistoryPage> {
     final Color accent = finished
         ? green
         : started
-            ? orange
-            : muted;
-    final String statusText = finished ? '已结束' : (started ? '进行中' : '未开赛');
+        ? orange
+        : muted;
+    final String statusText = finished
+        ? '已结束'
+        : (started ? _liveLabel(m['live_status'], m['live_elapsed']) : '未开赛');
 
     return Card(
+      // Stable key lets a refresh update this row in place instead of
+      // rebuilding the whole list when in-play matches reorder.
+      key: ValueKey(
+        m['id']?.toString() ?? '${m['match_num']}-${m['home_team']}',
+      ),
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
             builder: (_) => HistoryDetailPage(
-                client: widget.client, match: Match.fromJson(m)))),
+              client: widget.client,
+              match: Match.fromJson(m),
+            ),
+          ),
+        ),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -195,17 +209,22 @@ class _HistoryPageState extends State<HistoryPage> {
                     ),
                   ),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: accent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(999),
                     ),
-                    child: Text(statusText,
-                        style: TextStyle(
-                            color: accent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
+                    child: Text(
+                      statusText,
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                   const Icon(Icons.chevron_right, size: 18, color: muted),
                 ],
@@ -218,18 +237,30 @@ class _HistoryPageState extends State<HistoryPage> {
                       m['home_team']?.toString() ?? '',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   Expanded(
-                      child:
-                          _centerScore(m, finished, started, home, away, hh, ah)),
+                    child: _centerScore(
+                      m,
+                      finished,
+                      started,
+                      home,
+                      away,
+                      hh,
+                      ah,
+                    ),
+                  ),
                   Expanded(
                     child: Text(
                       m['away_team']?.toString() ?? '',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
@@ -253,20 +284,32 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  Widget _centerScore(Map<String, dynamic> m, bool finished, bool started,
-      int? home, int? away, int? hh, int? ah) {
+  Widget _centerScore(
+    Map<String, dynamic> m,
+    bool finished,
+    bool started,
+    int? home,
+    int? away,
+    int? hh,
+    int? ah,
+  ) {
     if ((finished || started) && home != null && away != null) {
       final Color color = finished ? green : orange;
       return Column(
         children: [
-          Text('$home - $away',
-              style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: color)),
+          Text(
+            '$home - $away',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
           if (hh != null && ah != null)
-            Text('半场 $hh - $ah',
-                style: const TextStyle(color: muted, fontSize: 11)),
+            Text(
+              '半场 $hh - $ah',
+              style: const TextStyle(color: muted, fontSize: 11),
+            ),
         ],
       );
     }
@@ -279,4 +322,22 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   int? _goal(dynamic v) => v is num ? v.toInt() : null;
+
+  /// Human-readable phase + elapsed minute for an in-play match.
+  String _liveLabel(dynamic status, dynamic elapsed) {
+    final code = (status ?? '').toString().toUpperCase();
+    final minute = elapsed is num ? elapsed.toInt() : null;
+    final clock = minute == null ? '' : "$minute'";
+    return switch (code) {
+      'HT' => '中场',
+      'BT' => '加时中场',
+      'P' => '点球大战',
+      'SUSP' => '暂停',
+      'INT' => '中断',
+      'ET' => clock.isEmpty ? '加时' : '加时 $clock',
+      '1H' => clock.isEmpty ? '上半场' : '上半场 $clock',
+      '2H' => clock.isEmpty ? '下半场' : '下半场 $clock',
+      _ => clock.isEmpty ? '进行中' : '进行中 $clock',
+    };
+  }
 }
