@@ -1,0 +1,76 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.2'
+          channel: stable
+          cache: true
+
+      - name: Read version from pubspec
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^version: *//p' pubspec.yaml | head -1 | tr -d '\r')
+          NAME=${VERSION%%+*}
+          CODE=${VERSION##*+}
+          [ "$CODE" = "$VERSION" ] && CODE=0
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Building v$NAME ($CODE)"
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      - run: flutter test
+
+      - name: Configure signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/football-release.jks
+          cat > android/key.properties <<EOF
+          storeFile=football-release.jks
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk "football-v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}.apk"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}
+          name: v${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})
+          body: |
+            版本 ${{ steps.version.outputs.name }}（build ${{ steps.version.outputs.code }}）
+            Commit: ${{ github.sha }}
+          files: football-v*.apk
+          fail_on_unmatched_files: true
+          make_latest: true
