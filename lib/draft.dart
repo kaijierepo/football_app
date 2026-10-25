@@ -91,7 +91,12 @@ int betsFor(List<DraftLeg> legs, int unit) {
 /// match are alternatives and their payouts never add up. Each ticket's best
 /// case is the product of the per-match max odds; tickets are summed.
 /// Returns null when any option lacks numeric odds (无法计算).
-double? potentialFor(List<DraftLeg> legs, int unit, double stake, int multiple) {
+double? potentialFor(
+  List<DraftLeg> legs,
+  int unit,
+  double stake,
+  int multiple,
+) {
   final groups = _groupIndexes(legs);
   final n = groups.length;
   if (n == 0) return null;
@@ -120,14 +125,14 @@ double? potentialFor(List<DraftLeg> legs, int unit, double stake, int multiple) 
 /// In-memory plan draft (single / multi match). A singleton [draft] is shared
 /// across pages; the home shell + match detail page listen for the badge count.
 ///
-/// `unit` is the 关数 (M) of a 全组合过关 plan: `1` = 单关, `n` = 串关, and
-/// `1 < M < n` = M串1 过关. `unit <= 0` means "not chosen yet" and defaults to
-/// the full parlay (multi-select).
+/// `units` holds the selected 过关方式: `1` = 单关, `n` = 串关, and
+/// `1 < M < n` = M串1. Several can be selected at once (自由过关). An empty
+/// set means "not chosen yet" and defaults to the full parlay.
 class DraftModel extends ChangeNotifier {
   final List<DraftLeg> _legs = [];
+  final Set<int> _units = {};
   String title = '';
   double stake = 2;
-  int unit = 0;
   int multiple = 1;
 
   List<DraftLeg> get legs => List.unmodifiable(_legs);
@@ -136,21 +141,32 @@ class DraftModel extends ChangeNotifier {
   /// Distinct matches in the draft.
   int get matchCount => matchCountOf(_legs);
 
-  /// The effective 关数 = matches per ticket, clamped to `[1, matchCount]`,
-  /// defaulting to the full parlay.
-  int get effectiveUnit {
+  /// Selected 过关方式, clamped to `[1, matchCount]`; empty means the full
+  /// parlay (the default).
+  List<int> get effectiveUnits {
     final n = matchCount;
-    if (n == 0) return 0;
-    if (unit <= 0) return n;
-    return unit.clamp(1, n).toInt();
+    if (n == 0) return const [];
+    if (_units.isEmpty) return [n];
+    final valid = _units.where((u) => u >= 1 && u <= n).toSet().toList()
+      ..sort();
+    return valid.isEmpty ? [n] : valid;
+  }
+
+  /// Largest selected 关数 (compatibility helper).
+  int get effectiveUnit {
+    final list = effectiveUnits;
+    if (list.isEmpty) return 0;
+    return list.reduce((a, b) => a > b ? a : b);
   }
 
   /// Number of bets (注数): same-match options are alternatives inside a
-  /// ticket, not separate legs.
+  /// ticket, not separate legs. Multiple 过关方式 add their tickets together.
   int get bets {
-    final u = effectiveUnit;
-    if (u <= 0) return 0;
-    return betsFor(_legs, u);
+    var total = 0;
+    for (final unit in effectiveUnits) {
+      total += betsFor(_legs, unit);
+    }
+    return total;
   }
 
   bool contains(DraftLeg leg) => _legs.any((l) => l.sameAs(leg));
@@ -161,65 +177,70 @@ class DraftModel extends ChangeNotifier {
     final i = _legs.indexWhere((l) => l.sameAs(leg));
     if (i >= 0) {
       _legs.removeAt(i);
-      _clampUnit();
+      _clampUnits();
       notifyListeners();
       return false;
     }
     _legs.add(leg);
-    _clampUnit();
+    _clampUnits();
     notifyListeners();
     return true;
   }
 
   void removeAt(int index) {
     _legs.removeAt(index);
-    _clampUnit();
+    _clampUnits();
     notifyListeners();
   }
 
-  void setUnit(int value) {
-    unit = value;
-    _clampUnit();
+  void setUnits(Iterable<int> values) {
+    _units
+      ..clear()
+      ..addAll(values);
+    _clampUnits();
     notifyListeners();
   }
 
-  void _clampUnit() {
+  void _clampUnits() {
     if (_legs.isEmpty) {
-      unit = 0;
-    } else if (unit <= 0) {
-      // keep "auto" until the user explicitly picks a 关数
-    } else {
-      unit = unit.clamp(1, matchCountOf(_legs)).toInt();
+      _units.clear();
+      return;
     }
+    final n = matchCountOf(_legs);
+    _units.removeWhere((u) => u < 1 || u > n);
   }
 
   void clear() {
     _legs.clear();
+    _units.clear();
     title = '';
     stake = 2;
-    unit = 0;
     multiple = 1;
     notifyListeners();
   }
 
   Future<void> save(ApiClient client) async {
+    final units = effectiveUnits;
     final body = <String, dynamic>{
       'title': title.trim(),
-      'play_type': effectiveUnit == 1 ? 'single' : 'parlay',
-      'unit': effectiveUnit,
+      'play_type': units.length == 1 && units.first == 1 ? 'single' : 'parlay',
+      'unit': units.isEmpty ? null : units.last,
+      'units': units,
       'multiple': multiple,
       'stake': stake,
       'legs': _legs
-          .map((l) => {
-                'match_id': l.matchId,
-                'home_team': l.homeTeam,
-                'away_team': l.awayTeam,
-                'market': l.market,
-                'pick': l.pick,
-                'line': l.line,
-                'odds': l.odds,
-                'label': l.label,
-              })
+          .map(
+            (l) => {
+              'match_id': l.matchId,
+              'home_team': l.homeTeam,
+              'away_team': l.awayTeam,
+              'market': l.market,
+              'pick': l.pick,
+              'line': l.line,
+              'odds': l.odds,
+              'label': l.label,
+            },
+          )
           .toList(),
     };
     await client.post('/api/plans', body);

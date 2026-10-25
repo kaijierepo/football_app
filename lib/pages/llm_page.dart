@@ -48,8 +48,9 @@ class _LlmPageState extends State<LlmPage> {
           .map((e) => Plan.fromJson(Map<String, dynamic>.from(e)))
           .toList();
       final names = <String, String>{};
-      for (final m in (results[2]['predictions'] as List? ?? const [])
-          .whereType<Map>()) {
+      for (final m
+          in (results[2]['predictions'] as List? ?? const [])
+              .whereType<Map>()) {
         final j = Map<String, dynamic>.from(m);
         names[j['match_id']?.toString() ?? ''] =
             '${j['home_team']} vs ${j['away_team']}';
@@ -70,10 +71,14 @@ class _LlmPageState extends State<LlmPage> {
     setState(() => _predicting = true);
     try {
       final data = await widget.client.post('/api/predict/llm');
-      final runs = (data['runs'] as List? ?? const []).whereType<Map>().toList();
+      final runs = (data['runs'] as List? ?? const [])
+          .whereType<Map>()
+          .toList();
       final msg = runs
-          .map((r) =>
-              '${r['model']}: ${r['ok'] == true ? '成功(${r['predictions_n']}预测/${r['plans_n']}方案)' : '失败(${r['error']})'}')
+          .map(
+            (r) =>
+                '${r['model']}: ${r['ok'] == true ? '成功(${r['predictions_n']}预测/${r['plans_n']}方案)' : '失败(${r['error']})'}',
+          )
           .join('\n');
       if (mounted) _toast('预测完成\n$msg');
     } catch (e) {
@@ -87,8 +92,9 @@ class _LlmPageState extends State<LlmPage> {
   }
 
   void _toast(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg, maxLines: 10)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg, maxLines: 10)));
   }
 
   @override
@@ -126,19 +132,28 @@ class _LlmPageState extends State<LlmPage> {
             onPressed: _predicting ? null : _triggerPredict,
             icon: _predicting
                 ? const SizedBox(
-                    width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.auto_awesome),
             label: Text(_predicting ? '预测中…' : '生成模型预测'),
           ),
           const SizedBox(height: 16),
-          const Text('各模型预测', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const Text(
+            '各模型预测',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 8),
           if (byModel.isEmpty)
             const EmptyBox('暂无模型预测。点上方按钮生成（需先配置 llm_providers）。')
           else
             ...byModel.entries.map((e) => _modelSection(e.key, e.value)),
           const SizedBox(height: 16),
-          const Text('模型过关方案', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const Text(
+            '模型过关方案',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 8),
           if (_plans.isEmpty)
             const EmptyBox('暂无模型过关方案。')
@@ -161,7 +176,10 @@ class _LlmPageState extends State<LlmPage> {
               children: [
                 const Icon(Icons.smart_toy, color: green, size: 18),
                 const SizedBox(width: 8),
-                Text(model, style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text(
+                  model,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -180,9 +198,11 @@ class _LlmPageState extends State<LlmPage> {
         children: [
           Expanded(
             flex: 3,
-            child: Text(names,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            child: Text(
+              names,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
           ),
           SizedBox(
             width: 88,
@@ -220,9 +240,11 @@ class _LlmPageState extends State<LlmPage> {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () async {
-          final changed = await Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) =>
-                  PlanDetailPage(client: widget.client, plan: p)));
+          final changed = await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => PlanDetailPage(client: widget.client, plan: p),
+            ),
+          );
           if (changed == true) _load();
         },
         child: Padding(
@@ -233,8 +255,10 @@ class _LlmPageState extends State<LlmPage> {
               Row(
                 children: [
                   Expanded(
-                    child: Text(p.title,
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    child: Text(
+                      p.title,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ),
                   VerdictBadge(statusLabel),
                   const Icon(Icons.chevron_right, size: 18, color: muted),
@@ -242,28 +266,38 @@ class _LlmPageState extends State<LlmPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                '${p.model} · ${n <= 1 ? '单关' : '${p.effectiveUnit}串1'} · '
+                '${p.model} · ${p.modeLabel} · '
                 '$n 场${bets > 0 ? ' · $bets 注' : ''}',
                 style: const TextStyle(color: muted, fontSize: 12),
               ),
               const SizedBox(height: 2),
               Text(
                 p.legs
-                    .map((l) =>
-                        '${l.homeTeam}vs${l.awayTeam} ${legPickLabel(l.market, l.pick, l.label)}')
+                    .map(
+                      (l) =>
+                          '${l.homeTeam}vs${l.awayTeam} ${legPickLabel(l.market, l.pick, l.label)}',
+                    )
                     .join(' / '),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: muted, fontSize: 11),
               ),
               if (p.payout.returnAmount != null)
-                Text('中奖 ${p.payout.returnAmount!.toStringAsFixed(2)} 元',
-                    style: const TextStyle(
-                        color: green, fontWeight: FontWeight.w700))
+                Text(
+                  '中奖 ${p.payout.returnAmount!.toStringAsFixed(2)} 元',
+                  style: const TextStyle(
+                    color: green,
+                    fontWeight: FontWeight.w700,
+                  ),
+                )
               else if (p.payout.potential != null && p.payout.potential! > 0)
-                Text('最多中奖 ${p.payout.potential!.toStringAsFixed(2)} 元',
-                    style: const TextStyle(
-                        color: gold, fontWeight: FontWeight.w700)),
+                Text(
+                  '最多中奖 ${p.payout.potential!.toStringAsFixed(2)} 元',
+                  style: const TextStyle(
+                    color: gold,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
             ],
           ),
         ),

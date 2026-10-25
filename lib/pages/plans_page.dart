@@ -87,15 +87,21 @@ class _PlansPageState extends State<PlansPage> {
           : _error != null
           ? Center(child: Text('加载失败：$_error'))
           : RefreshIndicator(
-              onRefresh: _load,
+              // Refresh without swapping in a full-screen spinner: the
+              // RefreshIndicator must stay mounted for the pull gesture to
+              // finish, and a short list cannot be pulled unless the physics
+              // always allow overscroll.
+              onRefresh: () => _load(silent: true),
               child: _plans.isEmpty
                   ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: const [
                         SizedBox(height: 200),
                         EmptyBox('还没有方案。点右下角「＋」新建。'),
                       ],
                     )
                   : ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(12),
                       children: _plans.map(_planCard).toList(),
                     ),
@@ -151,15 +157,16 @@ class _PlansPageState extends State<PlansPage> {
       _ => '待开奖',
     };
     final n = p.matchCount;
-    final u = p.effectiveUnit;
+    final units = p.effectiveUnits;
     final groups = groupLegs(p.legs);
     final bets = p.payout.bets > 0
         ? p.payout.bets
         : (p.isRenjiu
               ? renjiuBets(groups.map((g) => g.legs.length).toList())
-              : betsForGroups(groups, u));
-    final mode = p.isRenjiu ? '任选9场' : (n <= 1 ? '单关' : '$u串1');
+              : units.fold<int>(0, (sum, u) => sum + betsForGroups(groups, u)));
+    final mode = p.modeLabel;
     return Card(
+      key: ValueKey(p.id),
       margin: const EdgeInsets.only(bottom: 14),
       child: InkWell(
         onTap: () async {

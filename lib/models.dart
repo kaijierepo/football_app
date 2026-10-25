@@ -195,6 +195,9 @@ class Plan {
       source = _s(j['source']),
       model = _s(j['model']),
       unit = _i(j['unit']),
+      units = (j['units'] is List)
+          ? (j['units'] as List).map(_i).where((u) => u > 0).toList()
+          : const [],
       multiple = _i(j['multiple']),
       status = _s(j['status']),
       legs = (j['legs'] is List)
@@ -208,6 +211,7 @@ class Plan {
   final String id, createdAt, title, playType, source, model, status;
   final double stake;
   final int unit;
+  final List<int> units;
   final int multiple;
   final List<Leg> legs;
   final Payout payout;
@@ -222,13 +226,31 @@ class Plan {
   /// separate parlay legs.
   int get matchCount => legs.map((l) => l.matchId).toSet().length;
 
-  /// Effective 关数 = number of matches per ticket, clamped to [1, matchCount].
-  int get effectiveUnit {
+  /// Selected 过关方式 (M串1). Legacy plans only stored one `unit`.
+  List<int> get effectiveUnits {
     final matches = matchCount;
-    if (matches == 0) return 1;
+    if (matches == 0) return const [];
+    if (units.isNotEmpty) {
+      final valid = units.where((u) => u <= matches).toSet().toList()..sort();
+      if (valid.isNotEmpty) return valid;
+    }
     final fallback = isParlay ? matches : 1;
-    final u = unit > 0 ? unit : fallback;
-    return u.clamp(1, matches).toInt();
+    return [fallback.clamp(1, matches).toInt()];
+  }
+
+  /// Largest selected 关数 (kept for compatibility with single-unit callers).
+  int get effectiveUnit {
+    final list = effectiveUnits;
+    if (list.isEmpty) return 1;
+    return list.reduce((a, b) => a > b ? a : b);
+  }
+
+  /// e.g. 单关, 2串1, or 单关+2串1+3串1 when several 过关方式 are selected.
+  String get modeLabel {
+    if (isRenjiu) return '任选9场';
+    final list = effectiveUnits;
+    if (list.length == 1 && list.first <= 1) return '单关';
+    return list.map((u) => u <= 1 ? '单关' : '$u串1').join('+');
   }
 }
 

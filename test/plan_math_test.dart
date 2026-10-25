@@ -70,6 +70,42 @@ void main() {
     expect(renjiuBets(List.filled(14, 3)), 39405366);
   });
 
+  test('multi-select 过关方式 adds tickets and max payouts', () {
+    final legs = [
+      for (final m in ['A', 'B', 'C']) leg(m, 'wdw', 'home', '2.0'),
+    ];
+    final model = DraftModel();
+    for (final l in legs) {
+      model.toggle(l);
+    }
+    model.setUnits([1, 2, 3]);
+    expect(model.effectiveUnits, [1, 2, 3]);
+    // 单关 3 + 2串1 C(3,2)=3 + 3串1 1 = 7 注.
+    expect(model.bets, 7);
+    final total = [
+      1,
+      2,
+      3,
+    ].map((u) => potentialFor(legs, u, 2, 1)!).reduce((a, b) => a + b);
+    // 单关 2x6=12, 2串1 2x(4x3)=24, 3串1 2x8=16 => 52.
+    expect(total, closeTo(52.0, 1e-9));
+  });
+
+  test('Plan modeLabel shows every selected 过关方式', () {
+    final plan = Plan.fromJson({
+      'id': 'p2',
+      'play_type': 'parlay',
+      'units': [1, 2, 3],
+      'legs': [
+        {'match_id': 'A', 'market': 'wdw', 'pick': 'home'},
+        {'match_id': 'B', 'market': 'wdw', 'pick': 'away'},
+        {'match_id': 'C', 'market': 'wdw', 'pick': 'home'},
+      ],
+    });
+    expect(plan.effectiveUnits, [1, 2, 3]);
+    expect(plan.modeLabel, '单关+2串1+3串1');
+  });
+
   test('Plan effectiveUnit is clamped to distinct matches', () {
     final plan = Plan.fromJson({
       'id': 'p1',

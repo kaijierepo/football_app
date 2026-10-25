@@ -41,13 +41,13 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     final p = widget.plan;
     final groups = groupLegs(p.legs);
     final n = groups.length;
-    final u = p.effectiveUnit;
+    final units = p.effectiveUnits;
     final bets = p.payout.bets > 0
         ? p.payout.bets
         : (p.isRenjiu
               ? renjiuBets(groups.map((g) => g.legs.length).toList())
-              : betsForGroups(groups, u));
-    final mode = p.isRenjiu ? '任选9场' : (n <= 1 ? '单关' : '$u串1');
+              : units.fold<int>(0, (sum, u) => sum + betsForGroups(groups, u)));
+    final mode = p.modeLabel;
     final statusLabel = switch (p.status) {
       'won' => p.isRenjiu ? '已中奖' : '已命中',
       'lost' => '未命中',

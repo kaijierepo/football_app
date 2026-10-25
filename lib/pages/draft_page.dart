@@ -17,14 +17,14 @@ class DraftPage extends StatefulWidget {
 
 class _DraftPageState extends State<DraftPage> {
   bool _saving = false;
-  late int _unit;
+  late Set<int> _units;
   int _multiple = 1;
   final TextEditingController _titleCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _unit = draft.effectiveUnit > 0 ? draft.effectiveUnit : 1;
+    _units = draft.effectiveUnits.toSet();
     _multiple = draft.multiple;
   }
 
@@ -34,14 +34,15 @@ class _DraftPageState extends State<DraftPage> {
     draft.title = _titleCtrl.text;
     draft.stake = 2;
     draft.multiple = _multiple;
-    draft.setUnit(_unit);
+    draft.setUnits(_units);
     try {
       await draft.save(widget.client);
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('保存失败：$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败：$e')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -66,59 +67,97 @@ class _DraftPageState extends State<DraftPage> {
             groups.putIfAbsent(legs[i].matchId, () => []).add(i);
           }
           final n = groups.length;
-          final u = _unit.clamp(1, n).toInt();
-          final bets = betsFor(legs, u);
+          // Only keep selected 过关方式 that are valid for the current matches;
+          // an empty selection means the default full parlay.
+          final units = _units.where((u) => u >= 1 && u <= n).toSet();
+          if (units.isEmpty && n > 0) units.add(n);
+          final sortedUnits = units.toList()..sort();
+          final modeLabel = sortedUnits
+              .map((u) => u <= 1 ? '单关' : '$u串1')
+              .join('+');
+          final bets = sortedUnits.fold<int>(
+            0,
+            (sum, u) => sum + betsFor(legs, u),
+          );
           final total = bets * 2 * _multiple;
-          final pot = potentialFor(legs, u, 2, _multiple);
+          final pots = sortedUnits
+              .map((u) => potentialFor(legs, u, 2, _multiple))
+              .toList();
+          final pot = pots.any((p) => p == null)
+              ? null
+              : pots.fold<double>(0.0, (sum, p) => sum + p!);
           return ListView(
             padding: const EdgeInsets.all(14),
             children: [
               for (final indexes in groups.values) _matchGroup(legs, indexes),
               const Divider(height: 24),
-              const Text('过关方式',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+              const Text(
+                '过关方式（可多选）',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
                   for (var m = 1; m <= n; m++)
-                    ChoiceChip(
+                    FilterChip(
                       label: Text(m == 1 ? '单关' : '$m串1'),
-                      selected: u == m,
-                      onSelected: (_) => setState(() => _unit = m),
+                      selected: units.contains(m),
+                      onSelected: (selected) => setState(() {
+                        if (selected) {
+                          _units.add(m);
+                        } else if (_units.length > 1) {
+                          _units.remove(m);
+                        }
+                      }),
                     ),
                 ],
               ),
               const SizedBox(height: 8),
               Text(
-                '共 $n 场比赛 · $bets 注 × $_multiple 倍'
+                '共 $n 场比赛 · 过关 $modeLabel · $bets 注 × $_multiple 倍'
                 '${n > 1 ? '（同一场只能取一个选项串进同一注）' : ''}',
                 style: const TextStyle(color: muted, fontSize: 12),
               ),
               const SizedBox(height: 4),
-              Text('购买金额 ${total.toStringAsFixed(2)} 元',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 14)),
+              Text(
+                '购买金额 ${total.toStringAsFixed(2)} 元',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
               const SizedBox(height: 2),
               if (pot != null)
-                Text('理论最多中奖 ${pot.toStringAsFixed(2)} 元',
-                    style: const TextStyle(
-                        color: gold, fontWeight: FontWeight.w700, fontSize: 14))
+                Text(
+                  '理论最多中奖 ${pot.toStringAsFixed(2)} 元',
+                  style: const TextStyle(
+                    color: gold,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                )
               else
-                const Text('理论中奖金额：部分选项无赔率，无法计算',
-                    style: TextStyle(color: muted, fontSize: 12)),
+                const Text(
+                  '理论中奖金额：部分选项无赔率，无法计算',
+                  style: TextStyle(color: muted, fontSize: 12),
+                ),
               const SizedBox(height: 12),
               TextField(
                 controller: _titleCtrl,
                 decoration: const InputDecoration(
-                    labelText: '方案标题（可选）', border: OutlineInputBorder()),
+                  labelText: '方案标题（可选）',
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  const Text('倍数',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                  const Text(
+                    '倍数',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline),
@@ -127,9 +166,13 @@ class _DraftPageState extends State<DraftPage> {
                         ? () => setState(() => _multiple--)
                         : null,
                   ),
-                  Text('$_multiple',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  Text(
+                    '$_multiple',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.add_circle_outline),
                     color: green,
@@ -140,9 +183,7 @@ class _DraftPageState extends State<DraftPage> {
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: _saving ? null : _save,
-                child: Text(_saving
-                    ? '保存中…'
-                    : '保存方案（$n 场 · $bets 注）'),
+                child: Text(_saving ? '保存中…' : '保存方案（$n 场 · $bets 注）'),
               ),
             ],
           );
@@ -163,12 +204,18 @@ class _DraftPageState extends State<DraftPage> {
             Row(
               children: [
                 Expanded(
-                  child: Text('${first.homeTeam} vs ${first.awayTeam}',
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w700)),
+                  child: Text(
+                    '${first.homeTeam} vs ${first.awayTeam}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
-                Text('${indexes.length} 个选项',
-                    style: const TextStyle(color: muted, fontSize: 11)),
+                Text(
+                  '${indexes.length} 个选项',
+                  style: const TextStyle(color: muted, fontSize: 11),
+                ),
               ],
             ),
             const SizedBox(height: 4),
@@ -204,12 +251,19 @@ class _DraftPageState extends State<DraftPage> {
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ),
-          Text(l.odds.isEmpty ? '-' : l.odds,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          Text(
+            l.odds.isEmpty ? '-' : l.odds,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
           IconButton(
             visualDensity: VisualDensity.compact,
             icon: const Icon(Icons.close, size: 18, color: red),
-            onPressed: () => draft.removeAt(index),
+            onPressed: () => setState(() {
+              draft.removeAt(index);
+              final n = draft.matchCount;
+              _units.removeWhere((u) => u < 1 || u > n);
+              if (n > 0 && _units.isEmpty) _units.add(n);
+            }),
           ),
         ],
       ),
