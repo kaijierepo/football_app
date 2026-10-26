@@ -21,7 +21,6 @@ class _PredictPageState extends State<PredictPage> {
 
   bool _loading = true;
   String? _error;
-  String _notice = '';
   List<Match> _matches = [];
   int _visibleCount = _pageSize;
 
@@ -46,7 +45,6 @@ class _PredictPageState extends State<PredictPage> {
           .toList();
       setState(() {
         _matches = upcoming;
-        _notice = data['notice']?.toString() ?? '';
         _visibleCount = _pageSize;
       });
     } catch (e) {
@@ -70,16 +68,6 @@ class _PredictPageState extends State<PredictPage> {
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          if (_notice.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF8DF),
-                border: const Border(left: BorderSide(color: gold, width: 4)),
-              ),
-              child: Text(_notice, style: const TextStyle(fontSize: 12)),
-            ),
           if (_matches.isEmpty)
             const EmptyBox('暂无可投注的比赛。')
           else ...[

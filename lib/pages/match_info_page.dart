@@ -21,7 +21,7 @@ class MatchInfoPage extends StatefulWidget {
 
 class _MatchInfoPageState extends State<MatchInfoPage> {
   static const _marketOrder = [
-    'wdw', 'handicap', 'total_goals', 'correct_score', 'over_under',
+    'wdw', 'handicap', 'total_goals', 'correct_score',
   ];
 
   bool _loading = true;
@@ -61,6 +61,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
           .whereType<Map>()
           .map((e) => LlmPrediction.fromJson(Map<String, dynamic>.from(e)))
           .where((p) => p.matchId == widget.match.matchId)
+          .where((p) => p.market != 'over_under')
           .toList();
       final generating = data['generating'] == true;
       setState(() {
@@ -357,7 +358,6 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       'correct_score' => pickLabel[o.value] ?? o.value,
       'handicap' => pickLabel[o.value] ?? o.label,
       'total_goals' => o.value,
-      'over_under' => pickLabel[o.value] ?? o.label,
       _ => o.label,
     };
     return ListenableBuilder(

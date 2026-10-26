@@ -93,7 +93,7 @@ List<String> marketsFor(Match m) {
   final out = <String>['wdw'];
   if (m.hhad.isNotEmpty) out.add('handicap');
   if (m.crs.isNotEmpty || m.topScores.isNotEmpty) out.add('correct_score');
-  out.addAll(['total_goals', 'over_under']);
+  out.add('total_goals');
   return out;
 }
 
@@ -126,11 +126,6 @@ List<BetOption> optionsFor(Match m, String market) {
       return [
         for (var i = 0; i <= 6; i++) BetOption('$i', '$i球', m.ttg['$i'] ?? ''),
         BetOption('7+', '7+球', m.ttg['7+'] ?? ''),
-      ];
-    case 'over_under':
-      return [
-        BetOption('over', '大 2.5 球', pct(m.over25)),
-        BetOption('under', '小 2.5 球', pct(m.under25)),
       ];
   }
   return const [];

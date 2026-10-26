@@ -19,7 +19,7 @@ class HistoryDetailPage extends StatefulWidget {
 
 class _HistoryDetailPageState extends State<HistoryDetailPage> {
   static const _marketOrder = [
-    'wdw', 'handicap', 'total_goals', 'correct_score', 'over_under',
+    'wdw', 'handicap', 'total_goals', 'correct_score',
   ];
 
   bool _loading = true;
@@ -45,6 +45,7 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
         _predictions = (data['predictions'] as List? ?? const [])
             .whereType<Map>()
             .map((e) => LlmPrediction.fromJson(Map<String, dynamic>.from(e)))
+            .where((p) => p.market != 'over_under')
             .toList();
         _verdicts = ModelVerdicts.parse(data['verdicts']) ?? _verdicts;
         _finished = data['finished'] == true || _finished;
@@ -154,13 +155,6 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
     if (v.outcome != null) {
       rows.add(_verdictRow('胜平负', _outcomeLabel(v.outcome!.pick),
           v.outcome!.prob, v.outcome!.hit));
-    }
-    if (v.overUnder != null) {
-      rows.add(_verdictRow(
-          '大小球 2.5',
-          v.overUnder!.pick == 'over' ? '大 2.5 球' : '小 2.5 球',
-          v.overUnder!.prob,
-          v.overUnder!.hit));
     }
     if (v.btts != null) {
       rows.add(_verdictRow('双方进球',

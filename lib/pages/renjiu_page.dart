@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../betting.dart';
 import '../widgets.dart';
+import 'renjiu_history_page.dart';
 
 /// 「任九」tab: the current 胜负彩 14-match issue, official 主/平/客 odds,
 /// the Poisson model's 1X2 probabilities when the fixture is also on the 竞彩
@@ -23,6 +24,8 @@ class _RenjiuPageState extends State<RenjiuPage> {
   String? _notice;
   List<Map<String, dynamic>> _issues = [];
   Map<String, dynamic> _lastDraw = const {};
+  int _updatedAt = 0;
+  int _sourceUpdatedAt = 0;
   int _issueIndex = 0;
   int _multiple = 1;
   bool _saving = false;
@@ -52,13 +55,15 @@ class _RenjiuPageState extends State<RenjiuPage> {
   Map<int, Set<String>> get _selected =>
       _selections[_issueKey] ?? const <int, Set<String>>{};
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final data = await widget.client.get('/api/renjiu');
+      final data = await widget.client.get(
+        '/api/renjiu${force ? '?refresh=1' : ''}',
+      );
       if (!mounted) return;
       final issues = (data['issues'] as List? ?? const [])
           .whereType<Map>()
@@ -69,6 +74,8 @@ class _RenjiuPageState extends State<RenjiuPage> {
         _lastDraw = data['last_draw'] is Map
             ? Map<String, dynamic>.from(data['last_draw'] as Map)
             : const {};
+        _updatedAt = (data['updated_at'] as num?)?.toInt() ?? 0;
+        _sourceUpdatedAt = (data['source_updated_at'] as num?)?.toInt() ?? 0;
         _notice = data['stale'] == true
             ? '接口暂不可用，显示缓存数据：${data['error'] ?? ''}'
             : data['error']?.toString();
@@ -80,6 +87,28 @@ class _RenjiuPageState extends State<RenjiuPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// True when the on-sale window has ended (the phone clock is 北京时间).
+  bool get _expired {
+    final end = _parseDateTime(_issue?['sale_end']);
+    return end != null && DateTime.now().isAfter(end);
+  }
+
+  static DateTime? _parseDateTime(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+    final iso = text.replaceFirst(' ', 'T');
+    // Official times are Beijing wall-clock; attach +08:00 so the comparison
+    // is correct even when the phone is in another timezone.
+    return DateTime.tryParse(iso.contains('+') ? iso : '$iso+08:00');
+  }
+
+  String _clockText(int ts) {
+    if (ts <= 0) return '-';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
   }
 
   void _toggle(int num, String pick) {
@@ -94,6 +123,21 @@ class _RenjiuPageState extends State<RenjiuPage> {
   void _clear() {
     setState(() => _selections[_issueKey] = {});
   }
+
+  void _openHistory() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RenjiuHistoryPage(client: widget.client),
+      ),
+    );
+  }
+
+  String _issueStatusLabel(Map issue) => switch (issue['status']) {
+    'on_sale' => ' · 在售',
+    'upcoming' => ' · 未开售',
+    'closed' => ' · 已截止',
+    _ => issue['current'] == true ? ' · 在售' : '',
+  };
 
   /// Pick 9 matches, preferring the models' 稳胆 then 复式, and take the
   /// advised outcomes (one for 稳胆, both for 复式). Weak matches only fill
@@ -186,6 +230,15 @@ class _RenjiuPageState extends State<RenjiuPage> {
     final matches = _matches;
     final issue = _issue;
     if (issue == null) return;
+    if (_expired || issue['status'] == 'closed') {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('本期已截止，已为你刷新在售期次')));
+      }
+      await _load(force: true);
+      return;
+    }
     final selected = _selected;
     final legs = <Map<String, dynamic>>[];
     for (final m in matches) {
@@ -304,9 +357,21 @@ class _RenjiuPageState extends State<RenjiuPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('加载失败：$_error'),
+              Text(_error!),
               const SizedBox(height: 12),
-              FilledButton(onPressed: _load, child: const Text('重试')),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilledButton(
+                    onPressed: () => _load(force: true),
+                    child: const Text('刷新'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _openHistory,
+                    child: const Text('查看往期'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -318,7 +383,7 @@ class _RenjiuPageState extends State<RenjiuPage> {
         _summaryCard(matches),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: _load,
+            onRefresh: () => _load(force: true),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
               children: [
@@ -371,7 +436,7 @@ class _RenjiuPageState extends State<RenjiuPage> {
                       child: ChoiceChip(
                         label: Text(
                           '第${_issues[i]['issue']}期'
-                          '${_issues[i]['current'] == true ? ' · 在售' : ''}',
+                          '${_issueStatusLabel(_issues[i])}',
                         ),
                         selected: i == _issueIndex,
                         onSelected: (_) => setState(() => _issueIndex = i),
@@ -382,8 +447,17 @@ class _RenjiuPageState extends State<RenjiuPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              '截止 ${_when(issue['sale_end'])} · 开奖 ${_when(issue['draw_time'])}',
-              style: const TextStyle(color: muted, fontSize: 12),
+              '截止 ${_when(issue['sale_end'])} · 开奖 ${_when(issue['draw_time'])}'
+              '${_expired ? ' · 已截止' : ''}',
+              style: TextStyle(
+                color: _expired ? orange : muted,
+                fontSize: 12,
+                fontWeight: _expired ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+            Text(
+              '数据更新于 ${_clockText(_sourceUpdatedAt > 0 ? _sourceUpdatedAt : _updatedAt)}',
+              style: const TextStyle(color: muted, fontSize: 11),
             ),
             if (prize is num)
               Padding(
@@ -463,14 +537,28 @@ class _RenjiuPageState extends State<RenjiuPage> {
                   label: const Text('按建议选 9 场'),
                 ),
                 FilledButton.icon(
-                  onPressed: (bets > 0 && !_saving) ? _savePlan : null,
+                  onPressed: (bets > 0 && !_saving && !_expired)
+                      ? _savePlan
+                      : null,
                   icon: const Icon(Icons.playlist_add_check, size: 18),
-                  label: Text(_saving ? '保存中…' : '加入方案'),
+                  label: Text(
+                    _expired ? '已截止' : (_saving ? '保存中…' : '加入方案'),
+                  ),
                 ),
                 TextButton.icon(
                   onPressed: groupCount == 0 ? null : _clear,
                   icon: const Icon(Icons.clear, size: 18),
                   label: const Text('清空'),
+                ),
+                TextButton.icon(
+                  onPressed: () => _load(force: true),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('刷新'),
+                ),
+                TextButton.icon(
+                  onPressed: _openHistory,
+                  icon: const Icon(Icons.history, size: 18),
+                  label: const Text('往期'),
                 ),
               ],
             ),
