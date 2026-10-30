@@ -42,7 +42,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
 
   /// Fast path: model predictions render immediately; injuries/lineups are
   /// lazy-loaded in the background so the slow API-Football call never blocks.
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -50,7 +50,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     _pollAttempts = 0;
     await _loadPredictions();
     if (mounted) setState(() => _loading = false);
-    _loadInfo();
+    _loadInfo(force: force);
   }
 
   Future<void> _loadPredictions() async {
@@ -89,15 +89,20 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     });
   }
 
-  Future<void> _loadInfo() async {
-    if (_info != null || _infoLoading) return;
+  Future<void> _loadInfo({bool force = false}) async {
+    // Lineups are published ~1h before kickoff; a page opened earlier caches
+    // an empty answer, so the refresh button must bypass this guard.
+    if (_infoLoading) return;
+    if (_info != null && !force) return;
     setState(() {
       _infoLoading = true;
       _infoError = null;
     });
     try {
       final matchId = Uri.encodeComponent(widget.match.matchId);
-      final data = await widget.client.get('/api/matches/$matchId/info');
+      final data = await widget.client.get(
+        '/api/matches/$matchId/info${force ? '?refresh=1' : ''}',
+      );
       if (!mounted) return;
       setState(() => _info = MatchInfo.fromJson(data));
     } catch (e) {
@@ -115,7 +120,10 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       appBar: AppBar(
         title: Text('${m.homeTeam} vs ${m.awayTeam}'),
         actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+          IconButton(
+            onPressed: () => _load(force: true),
+            icon: const Icon(Icons.refresh),
+          ),
           ListenableBuilder(
             listenable: draft,
             builder: (_, _) => Badge(
