@@ -7,6 +7,7 @@ import '../betting.dart';
 import '../models.dart';
 import '../widgets.dart';
 import 'draft_page.dart';
+import 'import_plan_page.dart';
 import 'plan_detail_page.dart';
 
 class PlansPage extends StatefulWidget {
@@ -106,15 +107,38 @@ class _PlansPageState extends State<PlansPage> {
                       children: _plans.map(_planCard).toList(),
                     ),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => DraftPage(client: widget.client)),
-          );
-          _load();
-        },
-        icon: const Icon(Icons.receipt_long),
-        label: const Text('新建方案'),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'importPlan',
+            tooltip: '截图导入',
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ImportPlanPage(client: widget.client),
+                ),
+              );
+              _load();
+            },
+            child: const Icon(Icons.qr_code_scanner),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'newPlan',
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => DraftPage(client: widget.client),
+                ),
+              );
+              _load();
+            },
+            icon: const Icon(Icons.receipt_long),
+            label: const Text('新建方案'),
+          ),
+        ],
       ),
     );
   }
