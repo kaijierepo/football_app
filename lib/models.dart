@@ -395,3 +395,54 @@ class MatchForm {
   final TeamForm home, away;
   final String error;
 }
+
+/// One live event (goal / card / substitution / VAR) from API-Football.
+class MatchEvent {
+  MatchEvent.fromJson(Map<String, dynamic> j)
+    : minute = _i(j['minute']),
+      extra = j['extra'] is num ? _i(j['extra']) : null,
+      side = _s(j['side']),
+      kind = _s(j['kind']),
+      detail = _s(j['detail']),
+      player = _s(j['player']),
+      assist = _s(j['assist']),
+      comments = _s(j['comments']),
+      score = _s(j['score']);
+
+  final int minute;
+  final int? extra;
+  final String side, kind, detail, player, assist, comments, score;
+
+  /// "67'" / "90+3'".
+  String get clock =>
+      extra != null && extra! > 0 ? "$minute+$extra'" : "$minute'";
+}
+
+/// Live state + event feed for one match.
+class LiveMatchInfo {
+  LiveMatchInfo.fromJson(Map<String, dynamic> j)
+    : status = _s(j['status']),
+      elapsed = j['elapsed'] is num ? _i(j['elapsed']) : null,
+      isLive = _b(j['is_live']) || _liveStatuses.contains(_s(j['status'])),
+      homeGoals = j['home_goals'] is num ? _i(j['home_goals']) : null,
+      awayGoals = j['away_goals'] is num ? _i(j['away_goals']) : null,
+      events = _events(j['events']),
+      error = _s(j['error']);
+
+  static const Set<String> _liveStatuses = {
+    '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT', 'SUSP',
+  };
+
+  final String status, error;
+  final int? elapsed, homeGoals, awayGoals;
+  final bool isLive;
+  final List<MatchEvent> events;
+
+  static List<MatchEvent> _events(dynamic v) {
+    if (v is! List) return const [];
+    return v
+        .whereType<Map>()
+        .map((e) => MatchEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+}

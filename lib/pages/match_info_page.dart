@@ -34,10 +34,25 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   bool _pollScheduled = false;
   int _pollAttempts = 0;
 
+  /// In-play view: while the match is live the first tab becomes a live text
+  /// feed instead of model predictions.
+  LiveMatchInfo? _live;
+  bool _liveMode = false;
+  bool _liveLoading = false;
+  String? _liveError;
+  Timer? _liveTimer;
+
   @override
   void initState() {
     super.initState();
     _load();
+    if (_shouldProbeLive(widget.match)) _loadLive();
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
   }
 
   /// Fast path: model predictions render immediately; injuries/lineups are
@@ -51,6 +66,70 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     await _loadPredictions();
     if (mounted) setState(() => _loading = false);
     _loadInfo(force: force);
+    if (_liveMode || _shouldProbeLive(widget.match)) _loadLive(force: force);
+  }
+
+  /// Only spend an API-Football call when the match might be in play: started
+  /// but unfinished, or kickoff is within the next 15 minutes / last 4 hours.
+  bool _shouldProbeLive(Match m) {
+    if (m.finished) return false;
+    if (m.started) return true;
+    final time = m.matchTime.isEmpty ? '00:00' : m.matchTime;
+    final normalized = time.split(':').length >= 3 ? time : '$time:00';
+    final kickoff = DateTime.tryParse('${m.matchDate}T$normalized');
+    if (kickoff == null) return false;
+    final now = DateTime.now();
+    return now.isAfter(kickoff.subtract(const Duration(minutes: 15))) &&
+        now.isBefore(kickoff.add(const Duration(hours: 4)));
+  }
+
+  Future<void> _loadLive({bool force = false}) async {
+    if (_liveLoading) return;
+    setState(() {
+      _liveLoading = true;
+      _liveError = null;
+    });
+    try {
+      final matchId = Uri.encodeComponent(widget.match.matchId);
+      final data = await widget.client.get(
+        '/api/matches/$matchId/events${force ? '?refresh=1' : ''}',
+      );
+      if (!mounted) return;
+      final info = LiveMatchInfo.fromJson(data);
+      setState(() {
+        _live = info;
+        _liveMode = info.isLive;
+        _liveLoading = false;
+      });
+      _scheduleLivePoll(info);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _liveError = e.toString();
+        _liveLoading = false;
+      });
+      _scheduleLivePoll(_live);
+    }
+  }
+
+  /// Poll every 30s while in play; check every 60s near kickoff so the tab
+  /// flips to the live feed on its own.
+  void _scheduleLivePoll(LiveMatchInfo? info) {
+    _liveTimer?.cancel();
+    if (!mounted) return;
+    const ended = {'FT', 'AET', 'PEN'};
+    if (info != null && ended.contains(info.status)) return;
+    final Duration delay;
+    if (info?.isLive == true) {
+      delay = const Duration(seconds: 30);
+    } else if (_shouldProbeLive(widget.match)) {
+      delay = const Duration(seconds: 60);
+    } else {
+      return;
+    }
+    _liveTimer = Timer(delay, () {
+      if (mounted) _loadLive();
+    });
   }
 
   Future<void> _loadPredictions() async {
@@ -139,14 +218,20 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
               ),
             ),
           ],
-          bottom: const TabBar(
-            labelPadding: EdgeInsets.symmetric(horizontal: 2),
+          bottom: TabBar(
+            labelPadding: const EdgeInsets.symmetric(horizontal: 2),
             tabs: [
-              Tab(icon: Icon(Icons.smart_toy, size: 20), text: '模型预测'),
-              Tab(icon: Icon(Icons.receipt_long, size: 20), text: '投注选项'),
-              Tab(icon: Icon(Icons.history, size: 20), text: '近期战绩'),
-              Tab(icon: Icon(Icons.medical_services, size: 20), text: '伤病'),
-              Tab(icon: Icon(Icons.groups, size: 20), text: '首发'),
+              _liveMode
+                  ? const Tab(
+                      icon: Icon(Icons.podcasts, size: 20), text: '实况')
+                  : const Tab(
+                      icon: Icon(Icons.smart_toy, size: 20), text: '模型预测'),
+              const Tab(
+                  icon: Icon(Icons.receipt_long, size: 20), text: '投注选项'),
+              const Tab(icon: Icon(Icons.history, size: 20), text: '近期战绩'),
+              const Tab(
+                  icon: Icon(Icons.medical_services, size: 20), text: '伤病'),
+              const Tab(icon: Icon(Icons.groups, size: 20), text: '首发'),
             ],
           ),
         ),
@@ -156,7 +241,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
                 ? Center(child: Text('加载失败：$_error'))
                 : TabBarView(
                     children: [
-                      _modelTab(m),
+                      _liveMode ? _liveTab(m) : _modelTab(m),
                       _bettingTab(m),
                       _FormTab(client: widget.client, matchId: m.matchId),
                       _injuriesTab(),
@@ -182,6 +267,249 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         const SizedBox(height: 8),
         ..._predictionSections(),
       ],
+    );
+  }
+
+  Widget _liveTab(Match m) {
+    final live = _live;
+    final events = live?.events ?? const <MatchEvent>[];
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
+        _liveHeader(m, live),
+        const SizedBox(height: 18),
+        _sectionTitle('实况文字转播', Icons.podcasts, red),
+        const SizedBox(height: 8),
+        if (live == null && _liveLoading)
+          const EmptyBox('实况加载中…')
+        else if (live == null && _liveError != null)
+          EmptyBox('实况加载失败：$_liveError')
+        else if (events.isEmpty)
+          EmptyBox(live != null && live.error.isNotEmpty
+              ? '实况不可用：${live.error}'
+              : '暂无比赛事件：可能刚开赛，或该赛事不在 API-Football 覆盖范围。')
+        else
+          ...events.map((e) => _commentaryRow(m, e)),
+        const SizedBox(height: 20),
+        _sectionTitle('时间线', Icons.timeline, green),
+        const SizedBox(height: 8),
+        if (events.isEmpty)
+          const EmptyBox('暂无时间线数据')
+        else
+          ...events.map((e) => _timelineRow(m, e)),
+        if (_liveLoading && live != null)
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _liveHeader(Match m, LiveMatchInfo? live) {
+    final hg = live?.homeGoals ?? m.homeGoals;
+    final ag = live?.awayGoals ?? m.awayGoals;
+    final score = (hg != null && ag != null) ? '$hg - $ag' : 'vs';
+    final status = _liveStatusLabel(live?.status ?? '');
+    final minute = live?.elapsed;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    m.homeTeam,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(score,
+                      style: const TextStyle(
+                          fontSize: 28, fontWeight: FontWeight.w800)),
+                ),
+                Expanded(
+                  child: Text(
+                    m.awayTeam,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                      color: red, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  [if (status.isNotEmpty) status, if (minute != null) "$minute'"]
+                      .join(' · '),
+                  style: const TextStyle(
+                      fontSize: 12.5, color: red, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _liveStatusLabel(String status) {
+    return switch (status) {
+      '1H' => '上半场',
+      'HT' => '中场休息',
+      '2H' => '下半场',
+      'ET' => '加时赛',
+      'BT' => '加时中场',
+      'P' => '点球大战',
+      'INT' => '比赛中断',
+      'SUSP' => '比赛暂停',
+      'LIVE' => '进行中',
+      'FT' => '已完场',
+      'AET' => '加时完场',
+      'PEN' => '点球完场',
+      _ => '',
+    };
+  }
+
+  /// API-Football has no commentary endpoint; each event becomes one sentence.
+  /// Substitution direction (in vs out) is inconsistent across fixtures, so it
+  /// is shown neutrally: "换人：球队 A / B".
+  String _commentary(Match m, MatchEvent e) {
+    final team = e.side == 'home'
+        ? m.homeTeam
+        : e.side == 'away'
+            ? m.awayTeam
+            : '';
+    final score = e.score.isNotEmpty ? '，比分 ${e.score}' : '';
+    final player = e.player.isNotEmpty ? e.player : '-';
+    switch (e.kind) {
+      case 'goal':
+        return '进球！$team $player'
+            '${e.assist.isNotEmpty ? '（助攻 ${e.assist}）' : ''}$score';
+      case 'penalty':
+        return '点球命中！$team $player$score';
+      case 'own_goal':
+        return '乌龙球！$team $player$score';
+      case 'missed_penalty':
+        return '罚失点球：$team $player';
+      case 'yellow':
+        return '黄牌：$team $player';
+      case 'red':
+        return '红牌：$team $player';
+      case 'second_yellow':
+        return '两黄变一红：$team $player';
+      case 'subst':
+        final other = e.assist.isNotEmpty ? e.assist : '-';
+        return '换人：$team $player / $other';
+      case 'var':
+        final note = e.detail.isNotEmpty ? e.detail : e.comments;
+        return 'VAR：$team${note.isNotEmpty ? ' $note' : ''}';
+      default:
+        final note = e.comments.isNotEmpty ? e.comments : e.detail;
+        return note.isNotEmpty ? '$team $note'.trim() : '$team 比赛事件';
+    }
+  }
+
+  Widget _commentaryRow(Match m, MatchEvent e) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 42,
+            child: Text(e.clock,
+                style: const TextStyle(
+                    fontSize: 12, color: muted, fontWeight: FontWeight.w600)),
+          ),
+          Expanded(
+            child: Text(_commentary(m, e),
+                style: const TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _timelineRow(Match m, MatchEvent e) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8F6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 42,
+            child: Text(e.clock,
+                style: const TextStyle(
+                    fontSize: 12, color: muted, fontWeight: FontWeight.w600)),
+          ),
+          _eventGlyph(e),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(_commentary(m, e),
+                style: const TextStyle(fontSize: 12.5)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _eventGlyph(MatchEvent e) {
+    switch (e.kind) {
+      case 'goal':
+      case 'penalty':
+        return const Icon(Icons.sports_soccer, size: 18, color: green);
+      case 'own_goal':
+        return const Icon(Icons.sports_soccer, size: 18, color: red);
+      case 'missed_penalty':
+        return const Icon(Icons.block, size: 18, color: muted);
+      case 'yellow':
+        return _cardGlyph(gold);
+      case 'red':
+      case 'second_yellow':
+        return _cardGlyph(red);
+      case 'subst':
+        return const Icon(Icons.swap_horiz, size: 18,
+            color: Color(0xFF3A6EA5));
+      case 'var':
+        return const Icon(Icons.videocam_outlined, size: 18, color: muted);
+      default:
+        return const Icon(Icons.circle, size: 12, color: muted);
+    }
+  }
+
+  Widget _cardGlyph(Color color) {
+    return Container(
+      width: 11,
+      height: 15,
+      decoration:
+          BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
     );
   }
 
