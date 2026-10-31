@@ -201,6 +201,7 @@ class Plan {
           : const [],
       multiple = _i(j['multiple']),
       status = _s(j['status']),
+      kind = _s(j['kind']),
       legs = (j['legs'] is List)
           ? (j['legs'] as List)
                 .whereType<Map>()
@@ -210,6 +211,10 @@ class Plan {
       payout = Payout.fromJson(j['payout']);
 
   final String id, createdAt, title, playType, source, model, status;
+
+  /// Recommendation category for LLM plans: mixed / wdw / correct_score /
+  /// high_odds / total_goals. Empty for user plans and legacy rows.
+  final String kind;
   final double stake;
   final int unit;
   final List<int> units;

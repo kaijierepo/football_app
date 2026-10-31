@@ -5,6 +5,9 @@ import '../models.dart';
 import '../widgets.dart';
 import 'plan_detail_page.dart';
 
+/// 模型推荐 tab: each LLM's 过关方案 for matches that have not kicked off —
+/// mixed parlays, 胜负平, 比分 and 冷门高赔. The old per-market prediction list
+/// lives on the match detail page instead.
 class LlmPage extends StatefulWidget {
   const LlmPage({super.key, required this.client});
 
@@ -15,11 +18,29 @@ class LlmPage extends StatefulWidget {
 }
 
 class _LlmPageState extends State<LlmPage> {
+  static const Map<String, String> _kindLabels = {
+    'mixed': '混合过关',
+    'wdw': '胜负平',
+    'handicap': '让球',
+    'total_goals': '总进球',
+    'correct_score': '比分',
+    'high_odds': '冷门高赔',
+    'single': '单关',
+  };
+
+  static const Map<String, int> _kindOrder = {
+    'mixed': 0,
+    'wdw': 1,
+    'handicap': 2,
+    'total_goals': 3,
+    'correct_score': 4,
+    'high_odds': 5,
+    'single': 6,
+  };
+
   bool _loading = true;
   String? _error;
-  List<LlmPrediction> _predictions = [];
   List<Plan> _plans = [];
-  Map<String, String> _matchNames = {};
   bool _predicting = false;
 
   @override
@@ -34,32 +55,12 @@ class _LlmPageState extends State<LlmPage> {
       _error = null;
     });
     try {
-      final results = await Future.wait([
-        widget.client.get('/api/llm/predictions'),
-        widget.client.get('/api/llm/plans'),
-        widget.client.get('/api/dashboard'),
-      ]);
-      final preds = (results[0]['predictions'] as List? ?? const [])
-          .whereType<Map>()
-          .map((e) => LlmPrediction.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-      final plans = (results[1]['plans'] as List? ?? const [])
+      final data = await widget.client.get('/api/llm/plans?pending=1');
+      final plans = (data['plans'] as List? ?? const [])
           .whereType<Map>()
           .map((e) => Plan.fromJson(Map<String, dynamic>.from(e)))
           .toList();
-      final names = <String, String>{};
-      for (final m
-          in (results[2]['predictions'] as List? ?? const [])
-              .whereType<Map>()) {
-        final j = Map<String, dynamic>.from(m);
-        names[j['match_id']?.toString() ?? ''] =
-            '${j['home_team']} vs ${j['away_team']}';
-      }
-      setState(() {
-        _predictions = preds;
-        _plans = plans;
-        _matchNames = names;
-      });
+      setState(() => _plans = plans);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -118,9 +119,15 @@ class _LlmPageState extends State<LlmPage> {
       );
     }
 
-    final byModel = <String, List<LlmPrediction>>{};
-    for (final p in _predictions) {
-      byModel.putIfAbsent(p.model, () => []).add(p);
+    final byModel = <String, List<Plan>>{};
+    for (final p in _plans) {
+      byModel.putIfAbsent(p.model.isEmpty ? '未知模型' : p.model, () => []).add(p);
+    }
+    for (final plans in byModel.values) {
+      plans.sort(
+        (a, b) =>
+            (_kindOrder[a.kind] ?? 99).compareTo(_kindOrder[b.kind] ?? 99),
+      );
     }
 
     return RefreshIndicator(
@@ -139,32 +146,22 @@ class _LlmPageState extends State<LlmPage> {
                 : const Icon(Icons.auto_awesome),
             label: Text(_predicting ? '预测中…' : '生成模型预测'),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           const Text(
-            '各模型预测',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            '各大模型对未开赛比赛的过关方案：混合、胜负平、比分，以及冷门高赔博冷。',
+            style: TextStyle(color: muted, fontSize: 12),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
           if (byModel.isEmpty)
-            const EmptyBox('暂无模型预测。点上方按钮生成（需先配置 llm_providers）。')
+            const EmptyBox('暂无模型过关方案。点上方按钮生成（需先配置 llm_providers）。')
           else
             ...byModel.entries.map((e) => _modelSection(e.key, e.value)),
-          const SizedBox(height: 16),
-          const Text(
-            '模型过关方案',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          if (_plans.isEmpty)
-            const EmptyBox('暂无模型过关方案。')
-          else
-            ..._plans.map(_llmPlanCard),
         ],
       ),
     );
   }
 
-  Widget _modelSection(String model, List<LlmPrediction> preds) {
+  Widget _modelSection(String model, List<Plan> plans) {
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
       child: Padding(
@@ -176,58 +173,30 @@ class _LlmPageState extends State<LlmPage> {
               children: [
                 const Icon(Icons.smart_toy, color: green, size: 18),
                 const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    model,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
                 Text(
-                  model,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  '${plans.length} 个方案',
+                  style: const TextStyle(color: muted, fontSize: 11),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            ...preds.map(_predRow),
+            const SizedBox(height: 4),
+            for (var i = 0; i < plans.length; i++) ...[
+              if (i > 0) const Divider(height: 16),
+              _planTile(plans[i]),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _predRow(LlmPrediction p) {
-    final names = _matchNames[p.matchId] ?? p.matchId;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              names,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-          ),
-          SizedBox(
-            width: 88,
-            child: Text(
-              '${marketLabel[p.market] ?? p.market} '
-              '${legPickLabel(p.market, p.pick, '')}',
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          SizedBox(
-            width: 48,
-            child: Text(
-              p.prob == null ? '' : pct(p.prob!),
-              textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          const SizedBox(width: 10),
-          VerdictBadge(p.result),
-        ],
-      ),
-    );
-  }
-
-  Widget _llmPlanCard(Plan p) {
+  Widget _planTile(Plan p) {
     final statusLabel = switch (p.status) {
       'won' => '已命中',
       'lost' => '未命中',
@@ -235,73 +204,99 @@ class _LlmPageState extends State<LlmPage> {
     };
     final n = p.matchCount;
     final bets = p.payout.bets;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () async {
-          final changed = await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => PlanDetailPage(client: widget.client, plan: p),
-            ),
-          );
-          if (changed == true) _load();
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      p.title,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+    return InkWell(
+      onTap: () async {
+        final changed = await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PlanDetailPage(client: widget.client, plan: p),
+          ),
+        );
+        if (changed == true) _load();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _kindChip(p.kind),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    p.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
                     ),
                   ),
-                  VerdictBadge(statusLabel),
-                  const Icon(Icons.chevron_right, size: 18, color: muted),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${p.model} · ${p.modeLabel} · '
-                '$n 场${bets > 0 ? ' · $bets 注' : ''}',
-                style: const TextStyle(color: muted, fontSize: 12),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                p.legs
-                    .map(
-                      (l) =>
-                          '${l.homeTeam}vs${l.awayTeam} ${legPickLabel(l.market, l.pick, l.label)}',
-                    )
-                    .join(' / '),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: muted, fontSize: 11),
-              ),
-              if (p.payout.returnAmount != null)
-                Text(
-                  '中奖 ${p.payout.returnAmount!.toStringAsFixed(2)} 元',
-                  style: const TextStyle(
-                    color: green,
-                    fontWeight: FontWeight.w700,
-                  ),
-                )
-              else if (p.payout.potential != null && p.payout.potential! > 0)
-                Text(
-                  '最多中奖 ${p.payout.potential!.toStringAsFixed(2)} 元',
-                  style: const TextStyle(
-                    color: gold,
-                    fontWeight: FontWeight.w700,
-                  ),
                 ),
-            ],
-          ),
+                VerdictBadge(statusLabel),
+                const Icon(Icons.chevron_right, size: 18, color: muted),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              '${p.modeLabel} · $n 场${bets > 0 ? ' · $bets 注' : ''}',
+              style: const TextStyle(color: muted, fontSize: 11),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              p.legs
+                  .map(
+                    (l) =>
+                        '${l.homeTeam}vs${l.awayTeam} ${legPickLabel(l.market, l.pick, l.label)}',
+                  )
+                  .join(' / '),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: muted, fontSize: 11),
+            ),
+            if (p.payout.potential != null && p.payout.potential! > 0)
+              Text(
+                '最多中奖 ${p.payout.potential!.toStringAsFixed(2)} 元',
+                style: const TextStyle(
+                  color: gold,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+          ],
         ),
       ),
     );
+  }
+
+  Widget _kindChip(String kind) {
+    final label = _kindLabels[kind] ?? '方案';
+    final color = _kindColor(kind);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Color _kindColor(String kind) {
+    return switch (kind) {
+      'mixed' => green,
+      'wdw' => gold,
+      'correct_score' => orange,
+      'high_odds' => red,
+      'total_goals' => const Color(0xFF3A6EA5),
+      _ => muted,
+    };
   }
 }
