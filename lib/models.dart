@@ -51,6 +51,7 @@ class Match {
       hhad = _odds(j['hhad']),
       crs = _odds(j['crs']),
       ttg = _odds(j['ttg']),
+      hafu = _odds(j['hafu']),
       topScores = _topScores(j['top_scores']),
       verdicts = ModelVerdicts.parse(j['verdicts']);
 
@@ -65,7 +66,7 @@ class Match {
   /// pure model output).
   final bool marketBlended;
   final double? homeXg, awayXg;
-  final Map<String, String> had, hhad, crs, ttg;
+  final Map<String, String> had, hhad, crs, ttg, hafu;
   final List<TopScore> topScores;
 
   /// Poisson pre-match snapshot graded against the final score (history rows
@@ -333,4 +334,64 @@ class InfoRow {
   final String team, player, position, kind, reason, status;
   final int? number;
   final bool isStarting;
+}
+
+/// One finished match in a team's recent form, scored relative to that team.
+class FormFixture {
+  FormFixture.fromJson(Map<String, dynamic> j)
+    : fixtureId = j['fixture_id'] is num ? _i(j['fixture_id']) : null,
+      playedAt = _i(j['played_at']),
+      leagueName = _s(j['league_name']),
+      homeName = _s(j['home_name']),
+      awayName = _s(j['away_name']),
+      homeGoals = _i(j['home_goals']),
+      awayGoals = _i(j['away_goals']),
+      isHome = _b(j['is_home']),
+      forGoals = _i(j['for_goals']),
+      againstGoals = _i(j['against_goals']),
+      result = _s(j['result']);
+
+  final int? fixtureId;
+  final int playedAt;
+  final String leagueName, homeName, awayName, result;
+  final int homeGoals, awayGoals, forGoals, againstGoals;
+  final bool isHome;
+
+  DateTime? get playedDate =>
+      playedAt > 0 ? DateTime.fromMillisecondsSinceEpoch(playedAt * 1000) : null;
+}
+
+/// One team's recent form: last N overall + last N home or away.
+class TeamForm {
+  TeamForm.fromJson(Map<String, dynamic> j, {required bool homeSide})
+    : overall = _fixtures(j['overall']),
+      subset = _fixtures(j[homeSide ? 'home' : 'away']);
+
+  final List<FormFixture> overall;
+  final List<FormFixture> subset;
+
+  static List<FormFixture> _fixtures(dynamic v) {
+    if (v is! List) return const [];
+    return v
+        .whereType<Map>()
+        .map((e) => FormFixture.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+}
+
+class MatchForm {
+  MatchForm.fromJson(Map<String, dynamic> j)
+    : homeTeam = _s(j['home_team']),
+      awayTeam = _s(j['away_team']),
+      home = TeamForm.fromJson(
+          j['home'] is Map ? Map<String, dynamic>.from(j['home'] as Map) : const {},
+          homeSide: true),
+      away = TeamForm.fromJson(
+          j['away'] is Map ? Map<String, dynamic>.from(j['away'] as Map) : const {},
+          homeSide: false),
+      error = _s(j['error']);
+
+  final String homeTeam, awayTeam;
+  final TeamForm home, away;
+  final String error;
 }

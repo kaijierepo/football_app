@@ -92,10 +92,16 @@ int renjiuBets(List<int> optionCounts) {
 List<String> marketsFor(Match m) {
   final out = <String>['wdw'];
   if (m.hhad.isNotEmpty) out.add('handicap');
+  if (m.hafu.isNotEmpty) out.add('half_full');
   if (m.crs.isNotEmpty || m.topScores.isNotEmpty) out.add('correct_score');
   out.add('total_goals');
   return out;
 }
+
+/// 半全场胜平负：前半 = 半场结果，后半 = 全场结果（h 主 / d 平 / a 客）。
+const List<String> halfFullPicks = [
+  'hh', 'hd', 'ha', 'dh', 'dd', 'da', 'ah', 'ad', 'aa',
+];
 
 /// All selectable options (with odds) for a given [market].
 List<BetOption> optionsFor(Match m, String market) {
@@ -111,6 +117,11 @@ List<BetOption> optionsFor(Match m, String market) {
         BetOption('home', '主胜（${lineText(m.hhad['line'])}）', m.hhad['home'] ?? '', m.hhad['line']),
         BetOption('draw', '平局（${lineText(m.hhad['line'])}）', m.hhad['draw'] ?? '', m.hhad['line']),
         BetOption('away', '客胜（${lineText(m.hhad['line'])}）', m.hhad['away'] ?? '', m.hhad['line']),
+      ];
+    case 'half_full':
+      return [
+        for (final k in halfFullPicks)
+          BetOption(k, pickLabel[k] ?? k, m.hafu[k] ?? ''),
       ];
     case 'correct_score':
       if (m.crs.isNotEmpty) {

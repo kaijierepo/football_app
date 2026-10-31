@@ -11,6 +11,7 @@ const Color muted = Color(0xFF66736F);
 const Map<String, String> marketLabel = {
   'wdw': '胜平负',
   'handicap': '让球胜平负',
+  'half_full': '半全场胜平负',
   'correct_score': '比分',
   'total_goals': '总进球数',
   'over_under': '大小球',
@@ -20,6 +21,7 @@ const Map<String, String> marketLabel = {
 const Map<String, String> marketShort = {
   'wdw': '胜平负',
   'handicap': '让球',
+  'half_full': '半全场',
   'correct_score': '比分',
   'total_goals': '进球',
   'over_under': '大小球',
@@ -29,6 +31,7 @@ const Map<String, String> marketShort = {
 Color marketColor(String market) => switch (market) {
   'wdw' => gold,
   'handicap' => const Color(0xFF6C5CE7),
+  'half_full' => const Color(0xFF0E7490),
   'correct_score' => orange,
   'total_goals' => green,
   'over_under' => const Color(0xFF2D6CDF),
@@ -71,6 +74,16 @@ const Map<String, String> pickLabel = {
   'other_home': '胜其他',
   'other_draw': '平其他',
   'other_away': '负其他',
+  // 半全场胜平负：前半半场、后半全场（h主/d平/a客）
+  'hh': '胜胜',
+  'hd': '胜平',
+  'ha': '胜负',
+  'dh': '平胜',
+  'dd': '平平',
+  'da': '平负',
+  'ah': '负胜',
+  'ad': '负平',
+  'aa': '负负',
 };
 
 String pct(double v) => '${(v * 100).toStringAsFixed(1)}%';
@@ -105,6 +118,9 @@ String legPickLabel(String market, String pick, String label) {
   }
   if (market == 'over_under') {
     return pick == 'over' ? '大 2.5 球' : '小 2.5 球';
+  }
+  if (market == 'half_full') {
+    return pickLabel[pick] ?? pick;
   }
   if (label.isNotEmpty) return label;
   return pickLabel[pick] ?? pick;

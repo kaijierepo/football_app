@@ -116,38 +116,57 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   @override
   Widget build(BuildContext context) {
     final m = widget.match;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('${m.homeTeam} vs ${m.awayTeam}'),
-        actions: [
-          IconButton(
-            onPressed: () => _load(force: true),
-            icon: const Icon(Icons.refresh),
-          ),
-          ListenableBuilder(
-            listenable: draft,
-            builder: (_, _) => Badge(
-              isLabelVisible: draft.count > 0,
-              label: Text('${draft.count}'),
-              child: IconButton(
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => DraftPage(client: widget.client))),
-                icon: const Icon(Icons.receipt_long),
+    return DefaultTabController(
+      length: 5,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('${m.homeTeam} vs ${m.awayTeam}'),
+          actions: [
+            IconButton(
+              onPressed: () => _load(force: true),
+              icon: const Icon(Icons.refresh),
+            ),
+            ListenableBuilder(
+              listenable: draft,
+              builder: (_, _) => Badge(
+                isLabelVisible: draft.count > 0,
+                label: Text('${draft.count}'),
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => DraftPage(client: widget.client))),
+                  icon: const Icon(Icons.receipt_long),
+                ),
               ),
             ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: '模型预测'),
+              Tab(text: '投注选项'),
+              Tab(text: '近期战绩'),
+              Tab(text: '伤病'),
+              Tab(text: '首发'),
+            ],
           ),
-        ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(child: Text('加载失败：$_error'))
+                : TabBarView(
+                    children: [
+                      _modelTab(m),
+                      _bettingTab(m),
+                      _FormTab(client: widget.client, matchId: m.matchId),
+                      _injuriesTab(),
+                      _lineupsTab(),
+                    ],
+                  ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('加载失败：$_error'))
-              : _buildBody(),
     );
   }
 
-  Widget _buildBody() {
-    final m = widget.match;
+  Widget _modelTab(Match m) {
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
@@ -161,15 +180,38 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         _sectionTitle('模型预测', Icons.smart_toy, green),
         const SizedBox(height: 8),
         ..._predictionSections(),
-        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  Widget _bettingTab(Match m) {
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
         _sectionTitle('投注选项', Icons.receipt_long, orange),
         const SizedBox(height: 8),
         ..._bettingSections(m),
-        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  Widget _injuriesTab() {
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
         _sectionTitle('伤病', Icons.medical_services, orange),
+        const SizedBox(height: 4),
         ..._injuriesWidgets(),
-        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  Widget _lineupsTab() {
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
         _sectionTitle('首发', Icons.groups, green),
+        const SizedBox(height: 4),
         ..._lineupsWidgets(),
       ],
     );
@@ -325,7 +367,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       final cols = switch (mk) {
         'correct_score' => 6,
         'total_goals' => 4,
-        'wdw' || 'handicap' => 3,
+        'wdw' || 'handicap' || 'half_full' => 3,
         _ => 2,
       };
       return Column(
@@ -365,6 +407,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     final top = switch (market) {
       'correct_score' => pickLabel[o.value] ?? o.value,
       'handicap' => pickLabel[o.value] ?? o.label,
+      'half_full' => pickLabel[o.value] ?? o.value,
       'total_goals' => o.value,
       _ => o.label,
     };
@@ -475,5 +518,219 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         ],
       );
     }).toList();
+  }
+}
+
+/// 近期战绩 tab: both teams' last-10 results, plus the home team's home form
+/// and the away team's away form. Fetched lazily so the rest of the detail page
+/// is not blocked by the API-Football round-trip.
+class _FormTab extends StatefulWidget {
+  const _FormTab({required this.client, required this.matchId});
+
+  final ApiClient client;
+  final String matchId;
+
+  @override
+  State<_FormTab> createState() => _FormTabState();
+}
+
+class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
+  bool _loading = true;
+  String? _error;
+  MatchForm? _form;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final matchId = Uri.encodeComponent(widget.matchId);
+      final data = await widget.client.get('/api/matches/$matchId/form');
+      if (!mounted) return;
+      setState(() => _form = MatchForm.fromJson(data));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          EmptyBox('近期战绩加载失败：$_error'),
+          Center(
+            child: TextButton(onPressed: _load, child: const Text('重试')),
+          ),
+        ],
+      );
+    }
+    final form = _form;
+    if (form == null) return const EmptyBox('暂无近期战绩数据');
+    if (form.error.isNotEmpty) return EmptyBox('近期战绩不可用：${form.error}');
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
+        _teamFormCard(form.homeTeam, form.home,
+            subsetLabel: '近 10 主场', icon: Icons.home_outlined),
+        const SizedBox(height: 18),
+        _teamFormCard(form.awayTeam, form.away,
+            subsetLabel: '近 10 客场', icon: Icons.flight_takeoff),
+      ],
+    );
+  }
+
+  Widget _teamFormCard(
+    String team,
+    TeamForm form, {
+    required String subsetLabel,
+    required IconData icon,
+  }) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, color: green, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(team,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            _summary(form.overall),
+            const SizedBox(height: 12),
+            const Text('近 10 场',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+            const SizedBox(height: 4),
+            ..._fixtureRows(form.overall, empty: '暂无近期比赛'),
+            const SizedBox(height: 12),
+            Text(subsetLabel,
+                style:
+                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+            const SizedBox(height: 4),
+            ..._fixtureRows(form.subset, empty: '暂无数据'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summary(List<FormFixture> rows) {
+    final n = rows.length;
+    var w = 0, d = 0, l = 0, gf = 0, ga = 0;
+    for (final r in rows) {
+      gf += r.forGoals;
+      ga += r.againstGoals;
+      if (r.result == 'W') {
+        w++;
+      } else if (r.result == 'D') {
+        d++;
+      } else {
+        l++;
+      }
+    }
+    Widget chip(String label, String value) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEEF4F1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text('$label $value', style: const TextStyle(fontSize: 12)),
+        );
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        chip('场次', '$n'),
+        chip('胜/平/负', '$w/$d/$l'),
+        chip('进球', '$gf'),
+        chip('失球', '$ga'),
+      ],
+    );
+  }
+
+  List<Widget> _fixtureRows(List<FormFixture> rows, {required String empty}) {
+    if (rows.isEmpty) {
+      return [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Text(empty,
+              style: const TextStyle(color: muted, fontSize: 12)),
+        ),
+      ];
+    }
+    return rows.map(_fixtureRow).toList();
+  }
+
+  Widget _fixtureRow(FormFixture r) {
+    final color = switch (r.result) {
+      'W' => green,
+      'D' => gold,
+      'L' => red,
+      _ => muted,
+    };
+    final date = r.playedDate;
+    final dateText = date == null ? '' : '${date.month}/${date.day}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Container(
+          width: 20,
+          height: 20,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(r.result,
+              style: TextStyle(
+                  color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 46,
+          child: Text('${r.isHome ? '主' : '客'} $dateText',
+              style: const TextStyle(fontSize: 11, color: muted)),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${r.homeName} ${r.homeGoals}-${r.awayGoals} ${r.awayName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12)),
+              if (r.leagueName.isNotEmpty)
+                Text(r.leagueName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, color: muted)),
+            ],
+          ),
+        ),
+      ]),
+    );
   }
 }
