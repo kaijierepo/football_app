@@ -168,6 +168,7 @@ class ModelVerdicts {
 class Leg {
   Leg.fromJson(Map<String, dynamic> j)
     : matchId = _s(j['match_id']),
+      matchNum = _s(j['match_num']),
       homeTeam = _s(j['home_team']),
       awayTeam = _s(j['away_team']),
       market = _s(j['market']),
@@ -179,7 +180,7 @@ class Leg {
       score = j['score']?.toString(),
       finished = _b(j['finished']);
 
-  final String matchId, homeTeam, awayTeam, market, pick, odds, label;
+  final String matchId, matchNum, homeTeam, awayTeam, market, pick, odds, label;
   final String? line, score;
   final String result;
   final bool finished;

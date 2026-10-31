@@ -40,6 +40,8 @@ class _ScanLeg {
 class _ImportPlanPageState extends State<ImportPlanPage> {
   bool _scanning = false;
   bool _saving = false;
+  int _scanProgress = 0;
+  int _scanTotal = 0;
   String? _error;
   List<_ScanLeg> _legs = [];
   List<String> _warnings = [];
@@ -55,61 +57,84 @@ class _ImportPlanPageState extends State<ImportPlanPage> {
   }
 
   Future<void> _pick() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
+    final picked = await ImagePicker().pickMultiImage();
+    if (picked.isEmpty) return;
     setState(() {
       _scanning = true;
       _error = null;
       _legs = [];
       _warnings = [];
+      _scanProgress = 0;
+      _scanTotal = picked.length;
     });
+    final merged = <_ScanLeg>[];
+    final seen = <String>{};
+    final warnings = <String>[];
+    final scannedUnits = <int>{};
+    var multiple = 1;
     try {
-      final bytes = await picked.readAsBytes();
-      final data = await widget.client.post('/api/plans/scan', {
-        'image_b64': base64Encode(bytes),
-      });
-      final legs = <_ScanLeg>[];
-      for (final raw in (data['legs'] as List? ?? const []).whereType<Map>()) {
-        final j = Map<String, dynamic>.from(raw);
-        legs.add(
-          _ScanLeg(
-            matchNum: '${j['match_num'] ?? ''}',
-            matched: j['matched'] == true,
-            leg: DraftLeg(
-              matchId: '${j['match_id'] ?? ''}',
-              homeTeam: '${j['home_team'] ?? ''}',
-              awayTeam: '${j['away_team'] ?? ''}',
-              market: '${j['market'] ?? ''}',
-              pick: '${j['pick'] ?? ''}',
-              line: '${j['line'] ?? ''}',
-              odds: '${j['odds'] ?? ''}',
-              label: '${j['label'] ?? ''}',
-            ),
-          ),
-        );
+      for (var i = 0; i < picked.length; i++) {
+        if (mounted) setState(() => _scanProgress = i + 1);
+        final prefix = picked.length > 1 ? '第 ${i + 1} 张：' : '';
+        try {
+          final bytes = await picked[i].readAsBytes();
+          final data = await widget.client.post('/api/plans/scan', {
+            'image_b64': base64Encode(bytes),
+          });
+          for (final raw in (data['legs'] as List? ?? const [])
+              .whereType<Map>()) {
+            final j = Map<String, dynamic>.from(raw);
+            final leg = _ScanLeg(
+              matchNum: '${j['match_num'] ?? ''}',
+              matched: j['matched'] == true,
+              leg: DraftLeg(
+                matchId: '${j['match_id'] ?? ''}',
+                matchNum: '${j['match_num'] ?? ''}',
+                homeTeam: '${j['home_team'] ?? ''}',
+                awayTeam: '${j['away_team'] ?? ''}',
+                market: '${j['market'] ?? ''}',
+                pick: '${j['pick'] ?? ''}',
+                line: '${j['line'] ?? ''}',
+                odds: '${j['odds'] ?? ''}',
+                label: '${j['label'] ?? ''}',
+              ),
+            );
+            // 多张截图可能重叠：同一场 + 玩法 + 选项只保留一次。
+            final key = '${leg.groupKey}|${leg.leg.market}|${leg.leg.pick}';
+            if (seen.add(key)) merged.add(leg);
+          }
+          for (final w in (data['warnings'] as List? ?? const [])) {
+            warnings.add('$prefix$w');
+          }
+          for (final u in (data['units'] as List? ?? const [])) {
+            final value = int.tryParse('$u') ?? 0;
+            if (value > 0) scannedUnits.add(value);
+          }
+          final m = ((data['multiple'] as num?)?.toInt() ?? 1).clamp(1, 99);
+          if (m > multiple) multiple = m;
+        } catch (e) {
+          warnings.add(
+            '${picked.length > 1 ? '第 ${i + 1} 张' : '截图'}识别失败：$e',
+          );
+        }
       }
-      final n = legs.map((e) => e.groupKey).toSet().length;
-      final units = (data['units'] as List? ?? const [])
-          .map((u) => int.tryParse('$u') ?? 0)
-          .where((u) => u >= 1 && u <= n)
-          .toSet();
+      final n = merged.map((e) => e.groupKey).toSet().length;
+      final units = picked.length == 1
+          ? scannedUnits.where((u) => u >= 1 && u <= n).toSet()
+          : <int>{};
       if (units.isEmpty && n > 0) units.add(n);
       if (!mounted) return;
       setState(() {
-        _legs = legs;
-        _warnings = (data['warnings'] as List? ?? const [])
-            .map((w) => '$w')
-            .toList();
+        _legs = merged;
+        _warnings = warnings;
         _units = units;
-        _multiple = ((data['multiple'] as num?)?.toInt() ?? 1).clamp(1, 99);
-        _autoTitle = '${data['title'] ?? ''}';
+        _multiple = multiple;
+        _autoTitle = _buildTitle();
         _titleCtrl.text = _autoTitle;
-        if (legs.isEmpty) {
-          _error = _warnings.isNotEmpty ? _warnings.join('\n') : '没有识别到选项';
+        if (merged.isEmpty) {
+          _error = warnings.isNotEmpty ? warnings.join('\n') : '没有识别到选项';
         }
       });
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
@@ -214,7 +239,7 @@ class _ImportPlanPageState extends State<ImportPlanPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('截图导入')),
       body: _scanning
-          ? const _ScanningView()
+          ? _ScanningView(progress: _scanProgress, total: _scanTotal)
           : _legs.isEmpty
           ? _startView()
           : _previewView(),
@@ -231,7 +256,7 @@ class _ImportPlanPageState extends State<ImportPlanPage> {
             const Icon(Icons.qr_code_scanner, size: 64, color: muted),
             const SizedBox(height: 14),
             const Text(
-              '选择一张竞彩「已选」截图，\n自动识别场次、玩法、选项和赔率。',
+              '选择竞彩「已选」截图（可多选），\n自动识别场次、玩法、选项和赔率。',
               textAlign: TextAlign.center,
               style: TextStyle(color: muted, height: 1.5),
             ),
@@ -487,16 +512,24 @@ class _ImportPlanPageState extends State<ImportPlanPage> {
 }
 
 class _ScanningView extends StatelessWidget {
-  const _ScanningView();
+  const _ScanningView({this.progress = 0, this.total = 0});
+
+  final int progress;
+  final int total;
 
   @override
-  Widget build(BuildContext context) => const Center(
+  Widget build(BuildContext context) => Center(
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CircularProgressIndicator(),
-        SizedBox(height: 16),
-        Text('正在识别截图…通常需要 10 秒左右', style: TextStyle(color: muted)),
+        const CircularProgressIndicator(),
+        const SizedBox(height: 16),
+        Text(
+          total > 1
+              ? '正在识别第 $progress/$total 张截图…每张约需 10 秒'
+              : '正在识别截图…通常需要 10 秒左右',
+          style: const TextStyle(color: muted),
+        ),
       ],
     ),
   );

@@ -166,6 +166,7 @@ class MatchCard extends StatelessWidget {
             children: opts.map((o) {
               final leg = DraftLeg(
                 matchId: m.matchId,
+                matchNum: m.matchNum,
                 homeTeam: m.homeTeam,
                 awayTeam: m.awayTeam,
                 market: market,

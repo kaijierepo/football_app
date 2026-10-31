@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../betting.dart';
 import '../models.dart';
 import '../widgets.dart';
 import 'plan_detail_page.dart';
@@ -47,6 +48,7 @@ class _LlmPageState extends State<LlmPage> {
   bool _generating = false;
   bool _pollScheduled = false;
   int _pollAttempts = 0;
+  final Set<String> _expanded = {};
 
   @override
   void initState() {
@@ -231,6 +233,12 @@ class _LlmPageState extends State<LlmPage> {
     };
     final n = p.matchCount;
     final bets = p.payout.bets;
+    final reasons = <(Leg, String)>[
+      for (final l in p.legs)
+        if (legReason(l.market, l.pick, l.label).isNotEmpty)
+          (l, legReason(l.market, l.pick, l.label)),
+    ];
+    final expanded = _expanded.contains(p.id);
     return InkWell(
       onTap: () async {
         final changed = await Navigator.of(context).push(
@@ -271,15 +279,14 @@ class _LlmPageState extends State<LlmPage> {
             ),
             const SizedBox(height: 2),
             Text(
-              p.legs
-                  .map(
-                    (l) =>
-                        '${l.homeTeam}vs${l.awayTeam} ${legPickLabel(l.market, l.pick, l.label)}',
-                  )
-                  .join(' / '),
-              maxLines: 3,
+              p.legs.map(_legLine).join(' / '),
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: muted, fontSize: 11),
+              style: const TextStyle(
+                color: Color(0xFF3A4643),
+                fontSize: 11,
+                height: 1.5,
+              ),
             ),
             if (p.payout.potential != null && p.payout.potential! > 0)
               Text(
@@ -290,10 +297,91 @@ class _LlmPageState extends State<LlmPage> {
                   fontSize: 12,
                 ),
               ),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                if (reasons.isNotEmpty)
+                  TextButton.icon(
+                    style: _tileButtonStyle,
+                    onPressed: () => setState(() {
+                      if (expanded) {
+                        _expanded.remove(p.id);
+                      } else {
+                        _expanded.add(p.id);
+                      }
+                    }),
+                    icon: Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 16,
+                    ),
+                    label: Text(expanded ? '收起说明' : '说明（${reasons.length}）'),
+                  ),
+                const Spacer(),
+                TextButton.icon(
+                  style: _tileButtonStyle,
+                  onPressed: () => _addToPlan(p),
+                  icon: const Icon(Icons.add_circle_outline, size: 16),
+                  label: const Text('加入方案'),
+                ),
+              ],
+            ),
+            if (expanded && reasons.isNotEmpty)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F6EF),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final (leg, reason) in reasons)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Text(
+                          '${_legLine(leg)}：$reason',
+                          softWrap: true,
+                          style: const TextStyle(
+                            color: Color(0xFF3A4643),
+                            fontSize: 12,
+                            height: 1.55,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  static final ButtonStyle _tileButtonStyle = TextButton.styleFrom(
+    minimumSize: Size.zero,
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+    textStyle: const TextStyle(fontSize: 12),
+  );
+
+  /// 一行推荐结果：场次号 + 对阵 + 选项 + 赔率。
+  String _legLine(Leg l) {
+    final num = l.matchNum.isEmpty ? '' : '${l.matchNum} ';
+    final odds = l.odds.isEmpty ? '' : ' @${l.odds}';
+    return '$num${l.homeTeam}vs${l.awayTeam} '
+        '${selectionLabel(l.market, l.pick, l.line)}$odds';
+  }
+
+  Future<void> _addToPlan(Plan p) async {
+    if (p.legs.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _AddPlanDialog(client: widget.client, plan: p),
+    );
+    if (ok == true && mounted) _toast('已加入我的方案');
   }
 
   Widget _kindChip(String kind) {
@@ -325,5 +413,181 @@ class _LlmPageState extends State<LlmPage> {
       'total_goals' => const Color(0xFF3A6EA5),
       _ => muted,
     };
+  }
+}
+
+/// 把模型方案按可选倍数 / 过关方式复制进「我的方案」。
+class _AddPlanDialog extends StatefulWidget {
+  const _AddPlanDialog({required this.client, required this.plan});
+
+  final ApiClient client;
+  final Plan plan;
+
+  @override
+  State<_AddPlanDialog> createState() => _AddPlanDialogState();
+}
+
+class _AddPlanDialogState extends State<_AddPlanDialog> {
+  late final List<LegGroup> _groups;
+  late final Set<int> _units;
+  late int _multiple;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _groups = groupLegs(widget.plan.legs);
+    final n = _groups.length;
+    _units = widget.plan.effectiveUnits.where((u) => u >= 1 && u <= n).toSet();
+    if (_units.isEmpty && n > 0) _units.add(n);
+    _multiple = widget.plan.multiple > 0 ? widget.plan.multiple : 1;
+  }
+
+  int get _n => _groups.length;
+
+  List<int> get _sortedUnits => _units.toList()..sort();
+
+  int get _bets =>
+      _sortedUnits.fold(0, (sum, u) => sum + betsForGroups(_groups, u));
+
+  String get _modeLabel => _sortedUnits
+      .map((u) => u <= 1 ? '单关' : '$u串1')
+      .join('+');
+
+  Future<void> _save() async {
+    final units = _sortedUnits;
+    if (units.isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      await widget.client.post('/api/plans', {
+        'title': widget.plan.title,
+        'play_type': units.length == 1 && units.first == 1
+            ? 'single'
+            : 'parlay',
+        'unit': units.last,
+        'units': units,
+        'multiple': _multiple,
+        'stake': 2,
+        'legs': widget.plan.legs
+            .map(
+              (l) => {
+                'match_id': l.matchId,
+                'home_team': l.homeTeam,
+                'away_team': l.awayTeam,
+                'market': l.market,
+                'pick': l.pick,
+                'line': l.line ?? '',
+                'odds': l.odds,
+                'label': l.label,
+              },
+            )
+            .toList(),
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('加入失败：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _bets * 2 * _multiple;
+    return AlertDialog(
+      title: const Text('加入我的方案'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.plan.title,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$_n 场可选，按需调整过关方式和倍数',
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '过关方式（可多选）',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var m = 1; m <= _n; m++)
+                  FilterChip(
+                    label: Text(m <= 1 ? '单关' : '$m串1'),
+                    selected: _units.contains(m),
+                    onSelected: (selected) => setState(() {
+                      if (selected) {
+                        _units.add(m);
+                      } else if (_units.length > 1) {
+                        _units.remove(m);
+                      }
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text(
+                  '倍数',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline),
+                  color: _multiple > 1 ? green : muted,
+                  onPressed: _multiple > 1
+                      ? () => setState(() => _multiple--)
+                      : null,
+                ),
+                Text(
+                  '$_multiple',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  color: green,
+                  onPressed: () => setState(() => _multiple++),
+                ),
+              ],
+            ),
+            Text(
+              '共 $_n 场 · $_modeLabel · $_bets 注',
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+            Text(
+              '购买金额 ${total.toStringAsFixed(2)} 元',
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _saving || _units.isEmpty ? null : _save,
+          child: Text(_saving ? '加入中…' : '确认加入'),
+        ),
+      ],
+    );
   }
 }

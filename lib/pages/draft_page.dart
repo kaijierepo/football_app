@@ -205,6 +205,7 @@ class _DraftPageState extends State<DraftPage> {
               children: [
                 Expanded(
                   child: Text(
+                    '${first.matchNum.isEmpty ? '' : '${first.matchNum} '}'
                     '${first.homeTeam} vs ${first.awayTeam}',
                     style: const TextStyle(
                       fontSize: 14,

@@ -101,7 +101,11 @@ class _HomeShellState extends State<HomeShell> {
       HistoryPage(client: _client!),
       PlansPage(client: _client!),
       LlmPage(client: _client!),
-      SettingsPage(config: _config!, onSaved: _reloadConfig),
+      SettingsPage(
+        config: _config!,
+        client: _client!,
+        onSaved: _reloadConfig,
+      ),
     ];
     return Scaffold(
       appBar: AppBar(

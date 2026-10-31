@@ -189,6 +189,12 @@ class _PlansPageState extends State<PlansPage> {
               ? renjiuBets(groups.map((g) => g.legs.length).toList())
               : units.fold<int>(0, (sum, u) => sum + betsForGroups(groups, u)));
     final mode = p.modeLabel;
+    final matchNums = <String>[];
+    for (final l in p.legs) {
+      if (l.matchNum.isNotEmpty && !matchNums.contains(l.matchNum)) {
+        matchNums.add(l.matchNum);
+      }
+    }
     return Card(
       key: ValueKey(p.id),
       margin: const EdgeInsets.only(bottom: 14),
@@ -253,6 +259,16 @@ class _PlansPageState extends State<PlansPage> {
                 '${p.multiple > 1 ? ' · ${p.multiple} 倍' : ''}',
                 style: const TextStyle(color: muted, fontSize: 12),
               ),
+              if (matchNums.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    matchNums.join(' · '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+                ),
               const SizedBox(height: 6),
               _payoutLine(p),
             ],

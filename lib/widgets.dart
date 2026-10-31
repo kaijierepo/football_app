@@ -108,6 +108,35 @@ String lineShort(dynamic line) {
   return n > 0 ? '+${_fmtNum(n)}' : _fmtNum(n);
 }
 
+/// The bet selection itself (主胜 / 2球 / 胜胜 …), ignoring the free-text
+/// `label` that LLM plans store their 说明 in.
+String selectionLabel(String market, String pick, [dynamic line]) {
+  switch (market) {
+    case 'correct_score':
+      return pickLabel[pick] ?? '比分 $pick';
+    case 'total_goals':
+      return pick == '7+' ? '7+球' : '$pick球';
+    case 'over_under':
+      return pick == 'over' ? '大 2.5 球' : '小 2.5 球';
+    case 'half_full':
+      return pickLabel[pick] ?? pick;
+    case 'handicap':
+      final text = lineText(line);
+      return '${pickLabel[pick] ?? pick}${text.isEmpty ? '' : '（$text）'}';
+    default:
+      return pickLabel[pick] ?? pick;
+  }
+}
+
+/// The free-text 说明 an LLM plan stores in `label`; empty for plain picks.
+String legReason(String market, String pick, String label) {
+  final text = label.trim();
+  if (text.isEmpty || text == pick) return '';
+  if (text == selectionLabel(market, pick)) return '';
+  if (text == (pickLabel[pick] ?? '')) return '';
+  return text;
+}
+
 /// Human label for a leg's pick given its market.
 String legPickLabel(String market, String pick, String label) {
   if (market == 'correct_score') {

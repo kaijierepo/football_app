@@ -725,6 +725,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   Widget _optionCell(Match m, String market, BetOption o) {
     final leg = DraftLeg(
       matchId: m.matchId,
+      matchNum: m.matchNum,
       homeTeam: m.homeTeam,
       awayTeam: m.awayTeam,
       market: market,

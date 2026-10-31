@@ -19,6 +19,7 @@ class PlanDetailPage extends StatefulWidget {
 
 class _PlanDetailPageState extends State<PlanDetailPage> {
   bool _deleting = false;
+  bool _saving = false;
 
   Future<void> _delete() async {
     setState(() => _deleting = true);
@@ -33,6 +34,32 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       }
     } finally {
       if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  Future<void> _edit() async {
+    final p = widget.plan;
+    final choice = await showDialog<(List<int>, int)>(
+      context: context,
+      builder: (_) => _EditPlanDialog(plan: p),
+    );
+    if (choice == null) return;
+    setState(() => _saving = true);
+    try {
+      await widget.client.post('/api/plans/update', {
+        'id': p.id,
+        'units': choice.$1,
+        'multiple': choice.$2,
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -54,7 +81,16 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       _ => '待开奖',
     };
     return Scaffold(
-      appBar: AppBar(title: const Text('方案详情')),
+      appBar: AppBar(
+        title: const Text('方案详情'),
+        actions: [
+          IconButton(
+            tooltip: '调整倍数 / 过关方式',
+            onPressed: _saving || _deleting ? null : _edit,
+            icon: const Icon(Icons.tune),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(14),
         children: [
@@ -202,6 +238,9 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     final score = g.legs
         .map((l) => l.score)
         .firstWhere((s) => s != null && s.isNotEmpty, orElse: () => null);
+    final matchNum = g.legs
+        .map((l) => l.matchNum)
+        .firstWhere((s) => s.isNotEmpty, orElse: () => '');
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
@@ -213,6 +252,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
               children: [
                 Expanded(
                   child: Text(
+                    '${matchNum.isEmpty ? '' : '$matchNum '}'
                     '${g.homeTeam} vs ${g.awayTeam}',
                     style: const TextStyle(
                       fontWeight: FontWeight.w700,
@@ -250,42 +290,179 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
 
   Widget _optionRow(Leg l) {
     final color = marketColor(l.market);
-    final pick = legPickLabel(l.market, l.pick, l.label);
+    final pick = selectionLabel(l.market, l.pick, l.line);
+    final reason = legReason(l.market, l.pick, l.label);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 3,
-            height: 24,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(2),
-            ),
+          Row(
+            children: [
+              Container(
+                width: 3,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              MarketTag(l.market),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  pick,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 44,
+                child: Text(
+                  l.odds.isEmpty ? '-' : l.odds,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+              const SizedBox(width: 8),
+              VerdictBadge(l.result),
+            ],
           ),
-          const SizedBox(width: 8),
-          MarketTag(l.market),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              pick,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          if (reason.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 11, top: 3, right: 4),
+              child: Text(
+                reason,
+                softWrap: true,
+                style: const TextStyle(
+                  color: muted,
+                  fontSize: 12,
+                  height: 1.5,
+                ),
+              ),
             ),
-          ),
-          SizedBox(
-            width: 44,
-            child: Text(
-              l.odds.isEmpty ? '-' : l.odds,
-              textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-          const SizedBox(width: 8),
-          VerdictBadge(l.result),
         ],
       ),
+    );
+  }
+}
+
+/// 调整倍数 / 过关方式，返回 `(units, multiple)`。
+class _EditPlanDialog extends StatefulWidget {
+  const _EditPlanDialog({required this.plan});
+
+  final Plan plan;
+
+  @override
+  State<_EditPlanDialog> createState() => _EditPlanDialogState();
+}
+
+class _EditPlanDialogState extends State<_EditPlanDialog> {
+  late final int _n;
+  late Set<int> _units;
+  late int _multiple;
+
+  @override
+  void initState() {
+    super.initState();
+    _n = groupLegs(widget.plan.legs).length;
+    _units = widget.plan.effectiveUnits.where((u) => u >= 1 && u <= _n).toSet();
+    if (_units.isEmpty && _n > 0) _units.add(_n);
+    _multiple = widget.plan.multiple > 0 ? widget.plan.multiple : 1;
+  }
+
+  List<int> get _sortedUnits => _units.toList()..sort();
+
+  @override
+  Widget build(BuildContext context) {
+    final renjiu = widget.plan.isRenjiu;
+    return AlertDialog(
+      title: const Text('调整方案'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!renjiu) ...[
+              const Text(
+                '过关方式（可多选）',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (var m = 1; m <= _n; m++)
+                    FilterChip(
+                      label: Text(m <= 1 ? '单关' : '$m串1'),
+                      selected: _units.contains(m),
+                      onSelected: (selected) => setState(() {
+                        if (selected) {
+                          _units.add(m);
+                        } else if (_units.length > 1) {
+                          _units.remove(m);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
+            Row(
+              children: [
+                const Text(
+                  '倍数',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline),
+                  color: _multiple > 1 ? green : muted,
+                  onPressed: _multiple > 1
+                      ? () => setState(() => _multiple--)
+                      : null,
+                ),
+                Text(
+                  '$_multiple',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  color: green,
+                  onPressed: () => setState(() => _multiple++),
+                ),
+              ],
+            ),
+            Text(
+              renjiu
+                  ? '任选9场 · $_multiple 倍'
+                  : '共 $_n 场 · ${_sortedUnits.map((u) => u <= 1 ? '单关' : '$u串1').join('+')}',
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _units.isEmpty
+              ? null
+              : () => Navigator.of(context).pop((_sortedUnits, _multiple)),
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }

@@ -14,9 +14,11 @@ class DraftLeg {
     required this.line,
     required this.odds,
     required this.label,
+    this.matchNum = '',
   });
 
-  final String matchId, homeTeam, awayTeam, market, pick, line, odds, label;
+  final String matchId, matchNum, homeTeam, awayTeam, market, pick, line, odds,
+      label;
 
   bool sameAs(DraftLeg other) =>
       matchId == other.matchId && market == other.market && pick == other.pick;
