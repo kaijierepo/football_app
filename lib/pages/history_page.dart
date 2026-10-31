@@ -6,6 +6,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../widgets.dart';
 import 'history_detail_page.dart';
+import 'match_info_page.dart';
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key, required this.client});
@@ -199,14 +200,20 @@ class _HistoryPageState extends State<HistoryPage> {
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => HistoryDetailPage(
-              client: widget.client,
-              match: Match.fromJson(m),
+        onTap: () {
+          final match = Match.fromJson(m);
+          // 进行中的比赛直接进实况（文字转播 + 时间线）；已完场才看赛前预测核对。
+          final live =
+              !match.finished &&
+              (match.started || '${m['live_status'] ?? ''}'.isNotEmpty);
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => live
+                  ? MatchInfoPage(client: widget.client, match: match)
+                  : HistoryDetailPage(client: widget.client, match: match),
             ),
-          ),
-        ),
+          );
+        },
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
