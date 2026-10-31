@@ -22,6 +22,7 @@ class _HistoryPageState extends State<HistoryPage> {
   Map<String, dynamic> _data = {};
   String? _selectedDate;
   Timer? _liveTimer;
+  Timer? _syncFollowUp;
 
   @override
   void initState() {
@@ -38,6 +39,7 @@ class _HistoryPageState extends State<HistoryPage> {
   @override
   void dispose() {
     _liveTimer?.cancel();
+    _syncFollowUp?.cancel();
     super.dispose();
   }
 
@@ -70,6 +72,16 @@ class _HistoryPageState extends State<HistoryPage> {
           _selectedDate = _pickDefault(data['dates'] as List? ?? const []);
         }
       });
+      // The backend now returns the cached score immediately and refreshes
+      // in-play results in the background; pick the new score up once it is
+      // done instead of making the pull wait ~3 seconds.
+      if (forceLive && data['live_syncing'] == true) {
+        _syncFollowUp?.cancel();
+        _syncFollowUp = Timer(
+          const Duration(seconds: 4),
+          () => _load(silent: true),
+        );
+      }
     } catch (e) {
       if (mounted && !silent) setState(() => _error = e.toString());
     } finally {
