@@ -140,12 +140,13 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
             ),
           ],
           bottom: const TabBar(
+            labelPadding: EdgeInsets.symmetric(horizontal: 2),
             tabs: [
-              Tab(text: '模型预测'),
-              Tab(text: '投注选项'),
-              Tab(text: '近期战绩'),
-              Tab(text: '伤病'),
-              Tab(text: '首发'),
+              Tab(icon: Icon(Icons.smart_toy, size: 20), text: '模型预测'),
+              Tab(icon: Icon(Icons.receipt_long, size: 20), text: '投注选项'),
+              Tab(icon: Icon(Icons.history, size: 20), text: '近期战绩'),
+              Tab(icon: Icon(Icons.medical_services, size: 20), text: '伤病'),
+              Tab(icon: Icon(Icons.groups, size: 20), text: '首发'),
             ],
           ),
         ),
