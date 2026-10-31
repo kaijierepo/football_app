@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -42,6 +44,9 @@ class _LlmPageState extends State<LlmPage> {
   String? _error;
   List<Plan> _plans = [];
   bool _predicting = false;
+  bool _generating = false;
+  bool _pollScheduled = false;
+  int _pollAttempts = 0;
 
   @override
   void initState() {
@@ -49,23 +54,43 @@ class _LlmPageState extends State<LlmPage> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+      _pollAttempts = 0;
+    }
     try {
       final data = await widget.client.get('/api/llm/plans?pending=1');
       final plans = (data['plans'] as List? ?? const [])
           .whereType<Map>()
           .map((e) => Plan.fromJson(Map<String, dynamic>.from(e)))
           .toList();
-      setState(() => _plans = plans);
+      final generating = data['generating'] == true;
+      setState(() {
+        _plans = plans;
+        _generating = generating;
+      });
+      // The server generates today's plans in the background on first open;
+      // poll a few times so the tab fills itself instead of needing a pull.
+      if (plans.isEmpty && generating) _schedulePoll();
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (!silent) setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (!silent && mounted) setState(() => _loading = false);
     }
+  }
+
+  void _schedulePoll() {
+    if (_pollScheduled || _pollAttempts >= 20) return;
+    _pollScheduled = true;
+    _pollAttempts++;
+    Timer(const Duration(seconds: 15), () {
+      _pollScheduled = false;
+      if (mounted && _plans.isEmpty) _load(silent: true);
+    });
   }
 
   Future<void> _triggerPredict() async {
@@ -153,7 +178,9 @@ class _LlmPageState extends State<LlmPage> {
           ),
           const SizedBox(height: 14),
           if (byModel.isEmpty)
-            const EmptyBox('暂无模型过关方案。点上方按钮生成（需先配置 llm_providers）。')
+            EmptyBox(_generating
+                ? '模型方案生成中…（通常 1–2 分钟，完成后本页会自动刷新）'
+                : '暂无模型过关方案。点上方按钮生成（需先配置 llm_providers）。')
           else
             ...byModel.entries.map((e) => _modelSection(e.key, e.value)),
         ],
