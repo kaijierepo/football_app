@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -23,34 +25,53 @@ class _PredictPageState extends State<PredictPage> {
   String? _error;
   List<Match> _matches = [];
   int _visibleCount = _pageSize;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // Keep the board honest while it stays mounted inside the IndexedStack:
+    // a match that kicks off must leave the list without a manual pull.
+    _timer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _load(silent: true),
+    );
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final data = await widget.client.get('/api/matches/today');
       // 展示所有可投注且未开赛的比赛（含今天的后续场次与明天的场次）。
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final upcoming = (data['predictions'] as List? ?? const [])
           .whereType<Map>()
           .map((e) => Match.fromJson(Map<String, dynamic>.from(e)))
           .where((m) => !m.finished && !m.started)
+          .where((m) => m.kickoffTs <= 0 || m.kickoffTs > now)
           .toList();
+      if (!mounted) return;
       setState(() {
         _matches = upcoming;
-        _visibleCount = _pageSize;
+        _error = null;
+        if (!silent) _visibleCount = _pageSize;
       });
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted && !silent) setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (!silent && mounted) setState(() => _loading = false);
     }
   }
 
@@ -62,22 +83,28 @@ class _PredictPageState extends State<PredictPage> {
     if (_error != null) {
       return _ErrorView(message: _error!, onRetry: _load);
     }
-    final visible = _matches.take(_visibleCount).toList();
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    // Drop anything whose kickoff passed between the 60s refreshes, so the
+    // list never shows an already-started match even briefly.
+    final upcoming = _matches
+        .where((m) => m.kickoffTs <= 0 || m.kickoffTs > now)
+        .toList();
+    final visible = upcoming.take(_visibleCount).toList();
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(silent: true),
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          if (_matches.isEmpty)
+          if (upcoming.isEmpty)
             const EmptyBox('暂无可投注的比赛。')
           else ...[
             ...visible.map((m) => MatchCard(match: m, client: widget.client)),
-            if (_matches.length > _visibleCount)
+            if (upcoming.length > _visibleCount)
               TextButton.icon(
                 onPressed: () =>
                     setState(() => _visibleCount += _pageSize),
                 icon: const Icon(Icons.expand_more, size: 18),
-                label: Text('加载更多（剩余 ${_matches.length - _visibleCount} 场）'),
+                label: Text('加载更多（剩余 ${upcoming.length - _visibleCount} 场）'),
               ),
           ],
         ],

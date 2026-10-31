@@ -29,6 +29,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   MatchInfo? _info;
   bool _infoLoading = false;
   String? _infoError;
+  DateTime? _infoFetchedAt;
   List<LlmPrediction> _predictions = [];
   bool _predictionsGenerating = false;
   bool _pollScheduled = false;
@@ -45,8 +46,10 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   @override
   void initState() {
     super.initState();
+    // A match that is already in play opens straight into the live view, so
+    // the model tab never flashes while the first /events call is in flight.
+    _liveMode = widget.match.inPlay;
     _load();
-    if (_shouldProbeLive(widget.match)) _loadLive();
   }
 
   @override
@@ -63,22 +66,29 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       _error = null;
     });
     _pollAttempts = 0;
+    // Live data and predictions are independent; start the live fetch first so
+    // an in-play page paints its score and feed without waiting on the slower
+    // prediction request.
+    if (_liveMode || _shouldProbeLive(widget.match)) _loadLive(force: force);
     await _loadPredictions();
     if (mounted) setState(() => _loading = false);
     _loadInfo(force: force);
-    if (_liveMode || _shouldProbeLive(widget.match)) _loadLive(force: force);
   }
 
   /// Only spend an API-Football call when the match might be in play: started
   /// but unfinished, or kickoff is within the next 15 minutes / last 4 hours.
   bool _shouldProbeLive(Match m) {
     if (m.finished) return false;
-    if (m.started) return true;
+    if (m.inPlay) return true;
+    final now = DateTime.now();
+    if (m.kickoffTs > 0) {
+      final gap = now.millisecondsSinceEpoch ~/ 1000 - m.kickoffTs;
+      return gap >= -15 * 60 && gap <= 4 * 3600;
+    }
     final time = m.matchTime.isEmpty ? '00:00' : m.matchTime;
     final normalized = time.split(':').length >= 3 ? time : '$time:00';
     final kickoff = DateTime.tryParse('${m.matchDate}T$normalized');
     if (kickoff == null) return false;
-    final now = DateTime.now();
     return now.isAfter(kickoff.subtract(const Duration(minutes: 15))) &&
         now.isBefore(kickoff.add(const Duration(hours: 4)));
   }
@@ -98,9 +108,10 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       final info = LiveMatchInfo.fromJson(data);
       setState(() {
         _live = info;
-        _liveMode = info.isLive;
+        _liveMode = info.isLive || _liveMode;
         _liveLoading = false;
       });
+      if (info.isLive) _refreshLineupsIfMissing();
       _scheduleLivePoll(info);
     } catch (e) {
       if (!mounted) return;
@@ -112,7 +123,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     }
   }
 
-  /// Poll every 30s while in play; check every 60s near kickoff so the tab
+  /// Poll every 15s while in play; check every 60s near kickoff so the tab
   /// flips to the live feed on its own.
   void _scheduleLivePoll(LiveMatchInfo? info) {
     _liveTimer?.cancel();
@@ -121,7 +132,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     if (info != null && ended.contains(info.status)) return;
     final Duration delay;
     if (info?.isLive == true) {
-      delay = const Duration(seconds: 30);
+      delay = const Duration(seconds: 15);
     } else if (_shouldProbeLive(widget.match)) {
       delay = const Duration(seconds: 60);
     } else {
@@ -168,6 +179,20 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     });
   }
 
+  /// Lineups are published shortly before kickoff; a page opened earlier got
+  /// an empty answer. Re-ask at most every 2 minutes while in play so the XI
+  /// shows up on its own instead of waiting for the refresh button.
+  void _refreshLineupsIfMissing() {
+    if (_infoLoading) return;
+    if (_info != null && _info!.lineups.isNotEmpty) return;
+    final last = _infoFetchedAt;
+    if (last != null &&
+        DateTime.now().difference(last) < const Duration(minutes: 2)) {
+      return;
+    }
+    _loadInfo(force: true);
+  }
+
   Future<void> _loadInfo({bool force = false}) async {
     // Lineups are published ~1h before kickoff; a page opened earlier caches
     // an empty answer, so the refresh button must bypass this guard.
@@ -188,6 +213,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       if (!mounted) return;
       setState(() => _infoError = e.toString());
     } finally {
+      _infoFetchedAt = DateTime.now();
       if (mounted) setState(() => _infoLoading = false);
     }
   }
@@ -235,20 +261,29 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
             ],
           ),
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? Center(child: Text('加载失败：$_error'))
-                : TabBarView(
-                    children: [
-                      _liveMode ? _liveTab(m) : _modelTab(m),
-                      _bettingTab(m),
-                      _FormTab(client: widget.client, matchId: m.matchId),
-                      _injuriesTab(),
-                      _lineupsTab(),
-                    ],
-                  ),
+        // In live mode the first tab renders from the match data we already
+        // have; blocking it on the prediction request is what used to make the
+        // model page flash for a few seconds after tapping an in-play match.
+        body: _liveMode
+            ? _tabBody(m)
+            : _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(child: Text('加载失败：$_error'))
+                    : _tabBody(m),
       ),
+    );
+  }
+
+  Widget _tabBody(Match m) {
+    return TabBarView(
+      children: [
+        _liveMode ? _liveTab(m) : _modelTab(m),
+        _bettingTab(m),
+        _FormTab(client: widget.client, matchId: m.matchId),
+        _injuriesTab(),
+        _lineupsTab(),
+      ],
     );
   }
 
@@ -273,42 +308,48 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   Widget _liveTab(Match m) {
     final live = _live;
     final events = live?.events ?? const <MatchEvent>[];
-    return ListView(
-      padding: const EdgeInsets.all(14),
-      children: [
-        _liveHeader(m, live),
-        const SizedBox(height: 18),
-        _sectionTitle('实况文字转播', Icons.podcasts, red),
-        const SizedBox(height: 8),
-        if (live == null && _liveLoading)
-          const EmptyBox('实况加载中…')
-        else if (live == null && _liveError != null)
-          EmptyBox('实况加载失败：$_liveError')
-        else if (events.isEmpty)
-          EmptyBox(live != null && live.error.isNotEmpty
-              ? '实况不可用：${live.error}'
-              : '暂无比赛事件：可能刚开赛，或该赛事不在 API-Football 覆盖范围。')
-        else
-          ...events.map((e) => _commentaryRow(m, e)),
-        const SizedBox(height: 20),
-        _sectionTitle('时间线', Icons.timeline, green),
-        const SizedBox(height: 8),
-        if (events.isEmpty)
-          const EmptyBox('暂无时间线数据')
-        else
-          ...events.map((e) => _timelineRow(m, e)),
-        if (_liveLoading && live != null)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: Center(
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
+    return RefreshIndicator(
+      onRefresh: () async {
+        await Future.wait([_loadLive(force: true), _loadInfo(force: true)]);
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(14),
+        children: [
+          _liveHeader(m, live),
+          const SizedBox(height: 18),
+          _sectionTitle('实况文字转播', Icons.podcasts, red),
+          const SizedBox(height: 8),
+          if (live == null && _liveError != null)
+            EmptyBox('实况加载失败：$_liveError')
+          else if (live == null)
+            const EmptyBox('实况加载中…')
+          else if (events.isEmpty)
+            EmptyBox(live.error.isNotEmpty
+                ? '实况不可用：${live.error}'
+                : '暂无比赛事件：可能刚开赛，或该赛事不在 API-Football 覆盖范围。')
+          else
+            ...events.map((e) => _commentaryRow(m, e)),
+          const SizedBox(height: 20),
+          _sectionTitle('时间线', Icons.timeline, green),
+          const SizedBox(height: 8),
+          if (events.isEmpty)
+            const EmptyBox('暂无时间线数据')
+          else
+            ...events.map((e) => _timelineRow(m, e)),
+          if (_liveLoading && live != null)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -316,8 +357,8 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     final hg = live?.homeGoals ?? m.homeGoals;
     final ag = live?.awayGoals ?? m.awayGoals;
     final score = (hg != null && ag != null) ? '$hg - $ag' : 'vs';
-    final status = _liveStatusLabel(live?.status ?? '');
-    final minute = live?.elapsed;
+    final status = _liveStatusLabel(live?.status ?? m.liveStatus);
+    final minute = live?.elapsed ?? m.liveElapsed;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(

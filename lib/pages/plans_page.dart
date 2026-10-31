@@ -104,7 +104,7 @@ class _PlansPageState extends State<PlansPage> {
                   : ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(12),
-                      children: _plans.map(_planCard).toList(),
+                      children: _groupedCards(),
                     ),
             ),
       floatingActionButton: Column(
@@ -172,6 +172,74 @@ class _PlansPageState extends State<PlansPage> {
         ).showSnackBar(SnackBar(content: Text('删除失败：$e')));
       }
     }
+  }
+
+  /// 方案按天分组：每天一个日期头（星期、方案数、当日盈亏），下面跟当天方案。
+  List<Widget> _groupedCards() {
+    final byDay = <String, List<Plan>>{};
+    for (final p in _plans) {
+      final day = p.createdAt.length >= 10
+          ? p.createdAt.substring(0, 10)
+          : '未知日期';
+      byDay.putIfAbsent(day, () => []).add(p);
+    }
+    final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
+    final widgets = <Widget>[];
+    for (final day in days) {
+      final plans = byDay[day]!;
+      widgets.add(_dayHeader(day, plans));
+      widgets.addAll(plans.map(_planCard));
+    }
+    return widgets;
+  }
+
+  Widget _dayHeader(String day, List<Plan> plans) {
+    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    final dt = DateTime.tryParse(day);
+    final weekday = dt == null ? '' : weekdays[dt.weekday - 1];
+    var net = 0.0;
+    var settled = 0;
+    for (final p in plans) {
+      final profit = p.payout.profit;
+      if (profit == null) continue;
+      net += profit;
+      settled++;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            day,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+          if (weekday.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text(weekday, style: const TextStyle(color: muted, fontSize: 12)),
+          ],
+          const Spacer(),
+          Text(
+            '${plans.length} 个方案',
+            style: const TextStyle(color: muted, fontSize: 12),
+          ),
+          if (settled > 0) ...[
+            const SizedBox(width: 8),
+            Text(
+              '${net >= 0 ? '+' : '-'}${net.abs().toStringAsFixed(2)} 元',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: net > 0
+                    ? red
+                    : net < 0
+                    ? green
+                    : muted,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _planCard(Plan p) {

@@ -32,6 +32,9 @@ class Match {
       salesStatus = _s(j['sales_status']),
       finished = _b(j['finished']) || _s(j['status']) == 'finished',
       started = _b(j['started']),
+      kickoffTs = _i(j['kickoff_ts']),
+      liveStatus = _s(j['live_status']),
+      liveElapsed = j['live_elapsed'] is num ? _i(j['live_elapsed']) : null,
       homeGoals = j['home_goals'] is num ? _i(j['home_goals']) : null,
       awayGoals = j['away_goals'] is num ? _i(j['away_goals']) : null,
       homeWin = _d(j['home_win']),
@@ -58,6 +61,12 @@ class Match {
   final String matchId, matchNum, matchDate, matchTime, region, league;
   final String homeTeam, awayTeam, salesStatus;
   final bool finished, started;
+
+  /// Epoch seconds of the real kickoff (service-date quirks resolved server
+  /// side). 0 when unknown; used to hide expired matches without a round-trip.
+  final int kickoffTs;
+  final String liveStatus;
+  final int? liveElapsed;
   final int? homeGoals, awayGoals;
   final double homeWin, draw, awayWin, over25, under25, bttsYes, bttsNo;
   final bool poissonAvailable;
@@ -75,6 +84,15 @@ class Match {
 
   int? get totalGoals =>
       (homeGoals != null && awayGoals != null) ? homeGoals! + awayGoals! : null;
+
+  /// True once the kickoff timestamp has passed (local clock vs server epoch).
+  bool get kickoffPassed {
+    if (kickoffTs <= 0) return false;
+    return DateTime.now().millisecondsSinceEpoch ~/ 1000 >= kickoffTs;
+  }
+
+  /// A match that has started but not finished, i.e. the 实况 view applies.
+  bool get inPlay => !finished && (started || kickoffPassed || liveStatus.isNotEmpty);
   String get finalScore =>
       (homeGoals != null && awayGoals != null) ? '$homeGoals - $awayGoals' : '';
   String get outcomeLabel {
