@@ -110,11 +110,12 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
           ),
           const SizedBox(height: 4),
           Text(
-            '${p.createdAt} · $n 场 · $mode · 共 $bets 注'
-            '${p.stake > 0 ? ' · 每注 ${_money(p.stake)} 元' : ''}'
+            '${p.createdAt} · $mode'
             '${p.multiple > 1 ? ' · ${p.multiple} 倍' : ''}',
             style: const TextStyle(color: muted, fontSize: 12),
           ),
+          const SizedBox(height: 12),
+          _passCard(p, n, units, bets),
           const SizedBox(height: 12),
           _amountCard(p),
           const SizedBox(height: 20),
@@ -144,6 +145,107 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
               style: const TextStyle(color: red),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 过关方式 is the single thing a shop clerk must read off the slip, so it
+  /// gets the same treatment as 体彩's own 已选 panel: a dark, high-contrast
+  /// header with the 场数 / 注数 / 金额 / 最高奖金 and big 单关·N串1 chips.
+  Widget _passCard(Plan p, int n, List<int> units, int bets) {
+    final po = p.payout;
+    final multiple = p.multiple > 0 ? p.multiple : 1;
+    final cost = po.totalCost ?? (p.stake > 0 ? bets * p.stake * multiple : null);
+    final labels = p.isRenjiu
+        ? const ['任选9场']
+        : units.map((u) => u <= 1 ? '单关' : '$u串1').toList();
+    Widget chip(String label) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF0B3B34),
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        );
+    Widget fact(String label, String value, Color color) => Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            Text(value,
+                style: TextStyle(
+                    color: color, fontSize: 17, fontWeight: FontWeight.w800)),
+          ],
+        );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B3B34),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: red,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$n 场',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('已选比赛',
+                        style: TextStyle(color: Colors.white70, fontSize: 11)),
+                    Text(
+                      '共 $bets 注'
+                      '${cost != null ? ' · ${_money(cost)} 元' : ''}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+              if (po.potential != null)
+                fact('理论最高奖金', '${_money(po.potential!)} 元', gold),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '过关方式',
+            style: TextStyle(
+                color: Colors.white70,
+                fontSize: 11,
+                fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          Wrap(spacing: 8, runSpacing: 8, children: labels.map(chip).toList()),
+          if (multiple > 1) ...[
+            const SizedBox(height: 8),
+            Text('倍数 $multiple',
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          ],
         ],
       ),
     );

@@ -809,9 +809,6 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
-        _sectionTitle('投注选项', Icons.receipt_long, orange),
-        const SizedBox(height: 8),
-        ..._bettingSections(m),
         _sectionTitle('市场参考', Icons.public, green),
         const SizedBox(height: 8),
         LazySection<MarketOdds>(
@@ -821,6 +818,10 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
           builder: (o) => o.isEmpty ? null : marketBlock(o),
           emptyText: '暂无外部市场赔率（通常开赛前一天更新）。',
         ),
+        const SizedBox(height: 18),
+        _sectionTitle('投注选项', Icons.receipt_long, orange),
+        const SizedBox(height: 8),
+        ..._bettingSections(m),
       ],
     );
   }
@@ -1253,12 +1254,8 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
-        _teamFormCard(form.homeTeam, form.home,
-            subsetLabel: '近 10 主场', icon: Icons.home_outlined),
-        const SizedBox(height: 18),
-        _teamFormCard(form.awayTeam, form.away,
-            subsetLabel: '近 10 客场', icon: Icons.flight_takeoff),
-        const SizedBox(height: 18),
+        // 交锋记录 sits on top: it is the first thing read before the long
+        // last-10 lists, which easily push it off screen.
         sectionTitle('交锋记录', Icons.compare_arrows, green),
         const SizedBox(height: 8),
         LazySection<MatchH2H>(
@@ -1268,6 +1265,12 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
           builder: (h) => h.rows.isEmpty ? null : h2hBlock(h),
           emptyText: '暂无交锋记录',
         ),
+        const SizedBox(height: 18),
+        _teamFormCard(form.homeTeam, form.home,
+            subsetLabel: '近 10 主场', icon: Icons.home_outlined),
+        const SizedBox(height: 18),
+        _teamFormCard(form.awayTeam, form.away,
+            subsetLabel: '近 10 客场', icon: Icons.flight_takeoff),
         const SizedBox(height: 18),
         sectionTitle('赛季数据', Icons.bar_chart, gold),
         const SizedBox(height: 8),
