@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../betting.dart';
 import '../draft.dart';
+import '../match_sections.dart';
 import '../models.dart';
 import '../widgets.dart';
 import 'draft_page.dart';
@@ -42,6 +43,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   bool _liveLoading = false;
   String? _liveError;
   Timer? _liveTimer;
+  LiveOdds? _liveOdds;
 
   @override
   void initState() {
@@ -111,7 +113,10 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         _liveMode = info.isLive || _liveMode;
         _liveLoading = false;
       });
-      if (info.isLive) _refreshLineupsIfMissing();
+      if (info.isLive) {
+        _refreshLineupsIfMissing();
+        _loadLiveOdds(force: force);
+      }
       _scheduleLivePoll(info);
     } catch (e) {
       if (!mounted) return;
@@ -177,6 +182,22 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       _pollScheduled = false;
       if (mounted && _predictions.isEmpty) _loadPredictions();
     });
+  }
+
+  /// In-play bookmaker win probabilities — a second opinion next to the raw
+  /// score, refreshed with the live poll.
+  Future<void> _loadLiveOdds({bool force = false}) async {
+    try {
+      final matchId = Uri.encodeComponent(widget.match.matchId);
+      final data = await widget.client.get(
+        '/api/matches/$matchId/live-odds${force ? '?refresh=1' : ''}',
+      );
+      if (!mounted) return;
+      final odds = LiveOdds.fromJson(data);
+      setState(() => _liveOdds = odds.live ? odds : null);
+    } catch (_) {
+      // Odds are a bonus; the live feed must never fail because of them.
+    }
   }
 
   /// Lineups are published shortly before kickoff; a page opened earlier got
@@ -288,9 +309,11 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   }
 
   Widget _modelTab(Match m) {
+    final meta = _metaLine();
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
+        if (meta != null) ...[meta, const SizedBox(height: 12)],
         _sectionTitle(
             m.marketBlended ? '泊松模型（市场校准）' : '泊松模型',
             Icons.insights,
@@ -318,6 +341,10 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         padding: const EdgeInsets.all(14),
         children: [
           _liveHeader(m, live),
+          if (_metaLine() != null) ...[
+            const SizedBox(height: 8),
+            _metaLine()!,
+          ],
           if (live != null && live.stats.isNotEmpty) ...[
             const SizedBox(height: 16),
             _sectionTitle('技术统计', Icons.insights, gold),
@@ -417,9 +444,60 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
                 ),
               ],
             ),
+            if (_liveOdds != null) ...[
+              const SizedBox(height: 10),
+              _liveOddsRow(_liveOdds!),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  /// Bookmaker in-play win probabilities (博彩滚球).
+  Widget _liveOddsRow(LiveOdds odds) {
+    Widget cell(String label, double? value, Color color) => Expanded(
+          child: Column(children: [
+            Text(value == null ? '-' : pct(value),
+                style: TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w700, color: color)),
+            Text(label, style: const TextStyle(fontSize: 10, color: muted)),
+          ]),
+        );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8F6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(children: [
+        cell('主胜', odds.home, green),
+        cell('平局', odds.draw, gold),
+        cell('客胜', odds.away, orange),
+      ]),
+    );
+  }
+
+  /// Venue / round / referee, available once /info has resolved the fixture.
+  Widget? _metaLine() {
+    final meta = _info?.meta;
+    if (meta == null || meta.isEmpty) return null;
+    final venue = [meta.city, meta.venue].where((s) => s.isNotEmpty).join(' ');
+    final bits = [
+      if (meta.round.isNotEmpty) meta.round,
+      if (venue.isNotEmpty) venue,
+      if (meta.referee.isNotEmpty) '裁判 ${meta.referee}',
+    ];
+    if (bits.isEmpty) return null;
+    return Row(
+      children: [
+        const Icon(Icons.place_outlined, size: 14, color: muted),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(bits.join(' · '),
+              style: const TextStyle(fontSize: 11.5, color: muted)),
+        ),
+      ],
     );
   }
 
@@ -724,6 +802,9 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     );
   }
 
+  String _path(String suffix) =>
+      '/api/matches/${Uri.encodeComponent(widget.match.matchId)}/$suffix';
+
   Widget _bettingTab(Match m) {
     return ListView(
       padding: const EdgeInsets.all(14),
@@ -731,6 +812,15 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         _sectionTitle('投注选项', Icons.receipt_long, orange),
         const SizedBox(height: 8),
         ..._bettingSections(m),
+        _sectionTitle('市场参考', Icons.public, green),
+        const SizedBox(height: 8),
+        LazySection<MarketOdds>(
+          client: widget.client,
+          path: _path('market'),
+          parse: MarketOdds.fromJson,
+          builder: (o) => o.isEmpty ? null : marketBlock(o),
+          emptyText: '暂无外部市场赔率（通常开赛前一天更新）。',
+        ),
       ],
     );
   }
@@ -742,6 +832,16 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         _sectionTitle('伤病', Icons.medical_services, orange),
         const SizedBox(height: 4),
         ..._injuriesWidgets(),
+        const SizedBox(height: 16),
+        _sectionTitle('缺阵历史', Icons.history_toggle_off, orange),
+        const SizedBox(height: 8),
+        LazySection<MatchSquad>(
+          client: widget.client,
+          path: _path('squad'),
+          parse: MatchSquad.fromJson,
+          builder: (s) => s.absences.isEmpty ? null : absenceBlock(s),
+          emptyText: '暂无缺阵历史记录。',
+        ),
       ],
     );
   }
@@ -753,6 +853,30 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         _sectionTitle('首发', Icons.groups, green),
         const SizedBox(height: 4),
         ..._lineupsWidgets(),
+        const SizedBox(height: 16),
+        _sectionTitle('本场评分', Icons.grade, gold),
+        const SizedBox(height: 8),
+        LazySection<FixturePlayers>(
+          client: widget.client,
+          path: _path('players'),
+          parse: FixturePlayers.fromJson,
+          builder: (p) => p.teams.isEmpty ? null : ratingsBlock(p),
+          emptyText: '暂无评分（开赛后才会生成）。',
+        ),
+        const SizedBox(height: 16),
+        _sectionTitle('赛季关键球员', Icons.star_outline, green),
+        const SizedBox(height: 8),
+        LazySection<MatchSquad>(
+          client: widget.client,
+          path: _path('squad'),
+          parse: MatchSquad.fromJson,
+          builder: (s) {
+            final hasPlayers = (s.home?.players.isNotEmpty ?? false) ||
+                (s.away?.players.isNotEmpty ?? false);
+            return hasPlayers ? squadBlock(s) : null;
+          },
+          emptyText: '暂无球员数据。',
+        ),
       ],
     );
   }
@@ -1125,6 +1249,7 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
     final form = _form;
     if (form == null) return const EmptyBox('暂无近期战绩数据');
     if (form.error.isNotEmpty) return EmptyBox('近期战绩不可用：${form.error}');
+    final matchId = Uri.encodeComponent(widget.matchId);
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
@@ -1133,6 +1258,26 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
         const SizedBox(height: 18),
         _teamFormCard(form.awayTeam, form.away,
             subsetLabel: '近 10 客场', icon: Icons.flight_takeoff),
+        const SizedBox(height: 18),
+        sectionTitle('交锋记录', Icons.compare_arrows, green),
+        const SizedBox(height: 8),
+        LazySection<MatchH2H>(
+          client: widget.client,
+          path: '/api/matches/$matchId/h2h',
+          parse: MatchH2H.fromJson,
+          builder: (h) => h.rows.isEmpty ? null : h2hBlock(h),
+          emptyText: '暂无交锋记录',
+        ),
+        const SizedBox(height: 18),
+        sectionTitle('赛季数据', Icons.bar_chart, gold),
+        const SizedBox(height: 8),
+        LazySection<MatchTeamStats>(
+          client: widget.client,
+          path: '/api/matches/$matchId/team-stats',
+          parse: MatchTeamStats.fromJson,
+          builder: (s) => s.home == null && s.away == null ? null : teamStatsBlock(s),
+          emptyText: '暂无赛季数据',
+        ),
       ],
     );
   }

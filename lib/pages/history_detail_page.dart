@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../match_sections.dart';
 import '../models.dart';
 import '../widgets.dart';
 
@@ -120,6 +121,19 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
             _sectionTitle('首发', Icons.groups, green),
             const SizedBox(height: 8),
             ..._lineupWidgets(),
+            if (!m.matchId.startsWith('local|')) ...[
+              const SizedBox(height: 20),
+              _sectionTitle('本场评分', Icons.grade, gold),
+              const SizedBox(height: 8),
+              LazySection<FixturePlayers>(
+                client: widget.client,
+                path:
+                    '/api/matches/${Uri.encodeComponent(m.matchId)}/players',
+                parse: FixturePlayers.fromJson,
+                builder: (p) => p.teams.isEmpty ? null : ratingsBlock(p),
+                emptyText: '暂无本场评分。',
+              ),
+            ],
           ],
         ),
       ),

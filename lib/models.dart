@@ -326,11 +326,15 @@ class MatchInfo {
   MatchInfo.fromJson(Map<String, dynamic> j)
     : injuries = _rows(j['injuries']),
       lineups = _rows(j['lineups']),
+      meta = j['meta'] is Map
+          ? FixtureMeta.fromJson(Map<String, dynamic>.from(j['meta'] as Map))
+          : const FixtureMeta.empty(),
       error = _s(j['error']),
       fixtureId = j['fixture_id'] is num ? _i(j['fixture_id']) : null;
 
   final List<InfoRow> injuries;
   final List<InfoRow> lineups;
+  final FixtureMeta meta;
 
   /// Non-empty when the server could not resolve the match in API-Football.
   final String error;
@@ -504,5 +508,269 @@ class LiveMatchInfo {
         .whereType<Map>()
         .map((e) => MatchStat.fromJson(Map<String, dynamic>.from(e)))
         .toList();
+  }
+}
+
+/// Venue / round / referee from the fixture payload.
+class FixtureMeta {
+  const FixtureMeta(this.venue, this.city, this.round, this.referee);
+  const FixtureMeta.empty() : this('', '', '', '');
+
+  FixtureMeta.fromJson(Map<String, dynamic> j)
+    : venue = _s(j['venue']),
+      city = _s(j['city']),
+      round = _s(j['round']),
+      referee = _s(j['referee']);
+
+  final String venue, city, round, referee;
+
+  bool get isEmpty =>
+      venue.isEmpty && city.isEmpty && round.isEmpty && referee.isEmpty;
+}
+
+/// One team's season aggregates from `/team-stats`.
+class TeamStatsBlock {
+  TeamStatsBlock.fromJson(Map<String, dynamic> j)
+    : form = _s(j['form']),
+      played = _i((j['played'] as Map?)?['total']),
+      wins = _i((j['wins'] as Map?)?['total']),
+      draws = _i((j['draws'] as Map?)?['total']),
+      loses = _i((j['loses'] as Map?)?['total']),
+      goalsFor = _num((j['goals_for'] as Map?)?['total']),
+      goalsAgainst = _num((j['goals_against'] as Map?)?['total']),
+      avgFor = _num((j['goals_for'] as Map?)?['avg']),
+      avgAgainst = _num((j['goals_against'] as Map?)?['avg']),
+      avgHomeFor = _num((j['goals_for'] as Map?)?['avg_home']),
+      avgAwayFor = _num((j['goals_for'] as Map?)?['avg_away']),
+      cleanSheets = _i((j['clean_sheet'] as Map?)?['total']),
+      failedToScore = _i((j['failed_to_score'] as Map?)?['total']),
+      formations = (j['formations'] as List? ?? const [])
+          .map(_s)
+          .where((s) => s.isNotEmpty)
+          .toList();
+
+  final String form;
+  final int played, wins, draws, loses, cleanSheets, failedToScore;
+  final double goalsFor, goalsAgainst, avgFor, avgAgainst;
+  final double? avgHomeFor, avgAwayFor;
+  final List<String> formations;
+
+  static double _num(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(_s(v)) ?? 0;
+  }
+}
+
+class MatchTeamStats {
+  MatchTeamStats.fromJson(Map<String, dynamic> j)
+    : homeTeam = _s(j['home_team']),
+      awayTeam = _s(j['away_team']),
+      home = j['home'] is Map
+          ? TeamStatsBlock.fromJson(Map<String, dynamic>.from(j['home'] as Map))
+          : null,
+      away = j['away'] is Map
+          ? TeamStatsBlock.fromJson(Map<String, dynamic>.from(j['away'] as Map))
+          : null,
+      error = _s(j['error']);
+
+  final String homeTeam, awayTeam, error;
+  final TeamStatsBlock? home, away;
+}
+
+/// One previous meeting in the head-to-head list.
+class H2HRow {
+  H2HRow.fromJson(Map<String, dynamic> j)
+    : date = _s(j['date']),
+      league = _s(j['league']),
+      homeId = _i(j['home_id']),
+      awayId = _i(j['away_id']),
+      homeName = _s(j['home_name']),
+      awayName = _s(j['away_name']),
+      homeGoals = _i(j['home_goals']),
+      awayGoals = _i(j['away_goals']);
+
+  final String date, league, homeName, awayName;
+  final int homeId, awayId, homeGoals, awayGoals;
+}
+
+class MatchH2H {
+  MatchH2H.fromJson(Map<String, dynamic> j)
+    : rows = (j['rows'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => H2HRow.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      homeId = _i(j['home_id']),
+      awayId = _i(j['away_id']),
+      homeTeam = _s(j['home_team']),
+      awayTeam = _s(j['away_team']),
+      error = _s(j['error']);
+
+  final List<H2HRow> rows;
+  final int homeId, awayId;
+  final String homeTeam, awayTeam, error;
+}
+
+/// One player's line in the match rating tables.
+class PlayerRating {
+  PlayerRating.fromJson(Map<String, dynamic> j)
+    : name = _s(j['name']),
+      number = j['number'] is num ? _i(j['number']) : null,
+      position = _s(j['position']),
+      rating = j['rating'] is num ? _d(j['rating']) : null,
+      minutes = j['minutes'] is num ? _i(j['minutes']) : null,
+      goals = _i(j['goals']),
+      assists = _i(j['assists']),
+      yellow = _i(j['yellow']),
+      red = _i(j['red']),
+      substitute = _b(j['substitute']);
+
+  final String name, position;
+  final int? number, minutes;
+  final double? rating;
+  final int goals, assists, yellow, red;
+  final bool substitute;
+}
+
+class TeamRatings {
+  TeamRatings.fromJson(Map<String, dynamic> j)
+    : team = _s(j['team']),
+      averageRating = j['average_rating'] is num ? _d(j['average_rating']) : null,
+      players = (j['players'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => PlayerRating.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      best = j['best'] is Map
+          ? PlayerRating.fromJson(Map<String, dynamic>.from(j['best'] as Map))
+          : null;
+
+  final String team;
+  final double? averageRating;
+  final List<PlayerRating> players;
+  final PlayerRating? best;
+}
+
+class FixturePlayers {
+  FixturePlayers.fromJson(Map<String, dynamic> j)
+    : teams = (j['teams'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => TeamRatings.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      status = _s(j['status']),
+      error = _s(j['error']);
+
+  final List<TeamRatings> teams;
+  final String status, error;
+}
+
+/// Season key player (aggregate, not a single match).
+class KeyPlayer {
+  KeyPlayer.fromJson(Map<String, dynamic> j)
+    : name = _s(j['name']),
+      position = _s(j['position']),
+      appearances = _i(j['appearances']),
+      goals = _i(j['goals']),
+      assists = _i(j['assists']),
+      rating = j['rating'] is num ? _d(j['rating']) : null;
+
+  final String name, position;
+  final int appearances, goals, assists;
+  final double? rating;
+}
+
+class TeamSquad {
+  TeamSquad.fromJson(Map<String, dynamic> j)
+    : team = _s(j['team']),
+      coachName = _s((j['coach'] as Map?)?['name']),
+      coachSince = _s((j['coach'] as Map?)?['since']),
+      players = (j['players'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => KeyPlayer.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+
+  final String team, coachName, coachSince;
+  final List<KeyPlayer> players;
+}
+
+/// One injured player's absence record.
+class AbsenceRow {
+  AbsenceRow.fromJson(Map<String, dynamic> j)
+    : player = _s(j['player']),
+      team = _s(j['team']),
+      kind = _s(j['kind']),
+      reason = _s(j['reason']),
+      since = _s(j['since']),
+      until = _s(j['until']),
+      past = _i(j['past']);
+
+  final String player, team, kind, reason, since, until;
+  final int past;
+}
+
+class MatchSquad {
+  MatchSquad.fromJson(Map<String, dynamic> j)
+    : home = j['home'] is Map
+          ? TeamSquad.fromJson(Map<String, dynamic>.from(j['home'] as Map))
+          : null,
+      away = j['away'] is Map
+          ? TeamSquad.fromJson(Map<String, dynamic>.from(j['away'] as Map))
+          : null,
+      absences = (j['absences'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => AbsenceRow.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      error = _s(j['error']);
+
+  final TeamSquad? home, away;
+  final List<AbsenceRow> absences;
+  final String error;
+}
+
+/// Live win probabilities from `/odds/live`.
+class LiveOdds {
+  LiveOdds.fromJson(Map<String, dynamic> j)
+    : live = _b(j['live']),
+      home = j['home'] is num ? _d(j['home']) : null,
+      draw = j['draw'] is num ? _d(j['draw']) : null,
+      away = j['away'] is num ? _d(j['away']) : null,
+      books = _i(j['books']),
+      bttsYes = j['btts'] is Map && (j['btts'] as Map)['yes'] is num
+          ? _d((j['btts'] as Map)['yes'])
+          : null;
+
+  final bool live;
+  final double? home, draw, away, bttsYes;
+  final int books;
+}
+
+/// Consensus bookmaker probabilities for the whole market set.
+class MarketOdds {
+  MarketOdds.fromJson(Map<String, dynamic> j)
+    : home = j['home'] is num ? _d(j['home']) : null,
+      draw = j['draw'] is num ? _d(j['draw']) : null,
+      away = j['away'] is num ? _d(j['away']) : null,
+      books = _i(j['books']),
+      bttsYes = _sub(j, 'btts', 'yes'),
+      bttsNo = _sub(j, 'btts', 'no'),
+      over25 = _sub(j, 'ou25', 'over'),
+      under25 = _sub(j, 'ou25', 'under'),
+      homeDraw = _sub(j, 'double_chance', 'home_draw'),
+      homeAway = _sub(j, 'double_chance', 'home_away'),
+      drawAway = _sub(j, 'double_chance', 'draw_away'),
+      asianLine = _s((j['asian'] as Map?)?['line']),
+      asianHome = _sub(j, 'asian', 'home'),
+      asianAway = _sub(j, 'asian', 'away');
+
+  final double? home, draw, away, bttsYes, bttsNo, over25, under25;
+  final double? homeDraw, homeAway, drawAway, asianHome, asianAway;
+  final String asianLine;
+  final int books;
+
+  bool get isEmpty => home == null && bttsYes == null && over25 == null;
+
+  static double? _sub(Map<String, dynamic> j, String parent, String key) {
+    final node = j[parent];
+    if (node is! Map) return null;
+    final v = node[key];
+    return v is num ? _d(v) : null;
   }
 }
