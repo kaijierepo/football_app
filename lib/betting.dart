@@ -73,6 +73,14 @@ int betsForGroups(List<LegGroup> groups, int unit) {
   return total;
 }
 
+/// 任九 shorthand used on 体彩 slips: 主胜 = 3, 平局 = 1, 客胜 = 0.
+String renjiuDigit(String pick) => switch (pick) {
+  'home' => '3',
+  'draw' => '1',
+  'away' => '0',
+  _ => '',
+};
+
 /// 任选九场注数: choose any 9 of the selected matches and take one outcome in
 /// each; multi-outcome matches are 复式. This is the coefficient of x^9 in
 /// Π(1 + count[i]·x), computed with a small DP.

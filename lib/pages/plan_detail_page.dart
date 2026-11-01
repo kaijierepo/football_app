@@ -21,6 +21,71 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
   bool _deleting = false;
   bool _saving = false;
 
+  /// 任九要展示整期 14 场（未选的场次显示 "-"），而方案里只存了所选比赛，
+  /// 所以从 /api/renjiu 拉回该期赛程。
+  List<Map<String, dynamic>> _issueMatches = const [];
+  bool _issueLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.plan.isRenjiu) _loadIssue();
+  }
+
+  Future<void> _loadIssue() async {
+    setState(() => _issueLoading = true);
+    try {
+      final data = await widget.client.get('/api/renjiu');
+      final pools = <Map<String, dynamic>>[
+        for (final list in [data['issues'], data['history']])
+          if (list is List)
+            for (final e in list.whereType<Map>())
+              Map<String, dynamic>.from(e),
+      ];
+      final key =
+          RegExp(r'第(\d+)期').firstMatch(widget.plan.title)?.group(1) ?? '';
+      Map<String, dynamic>? issue;
+      for (final pool in pools) {
+        if (key.isNotEmpty && pool['issue']?.toString() == key) {
+          issue = pool;
+          break;
+        }
+      }
+      if (issue == null) {
+        // 期号对不上时，退化为「包含本方案全部对阵」的那一期。
+        for (final pool in pools) {
+          if (_coversPlan(pool)) {
+            issue = pool;
+            break;
+          }
+        }
+      }
+      final matches = ((issue?['matches'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      if (!mounted) return;
+      setState(() => _issueMatches = matches);
+    } catch (_) {
+      // 拉不到整期数据时，仍用方案内的 legs 渲染。
+    } finally {
+      if (mounted) setState(() => _issueLoading = false);
+    }
+  }
+
+  bool _coversPlan(Map<String, dynamic> issue) {
+    final teams = <String>{};
+    for (final m in ((issue['matches'] as List?) ?? const []).whereType<Map>()) {
+      teams.add(_pair(m['home_team'], m['away_team']));
+    }
+    final legs = widget.plan.legs;
+    return legs.isNotEmpty &&
+        legs.every((l) => teams.contains(_pair(l.homeTeam, l.awayTeam)));
+  }
+
+  static String _pair(Object? home, Object? away) =>
+      '${home?.toString().trim() ?? ''}|${away?.toString().trim() ?? ''}';
+
   Future<void> _delete() async {
     setState(() => _deleting = true);
     try {
@@ -119,23 +184,24 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
           const SizedBox(height: 12),
           _amountCard(p),
           const SizedBox(height: 20),
-          const Text(
-            '投注明细（按比赛场次）',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-          ),
-          const SizedBox(height: 4),
-          if (n > 1)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                p.isRenjiu
-                    ? '任选9场：从所选场次中任取 9 场，每场命中一个选项即中奖；'
-                          '同场多选为复式，注数自动计算。'
-                    : '同一场比赛的多个选项是复式备选，一注最多取其中一个。',
-                style: const TextStyle(color: muted, fontSize: 11),
-              ),
+          if (p.isRenjiu)
+            _renjiuSection(p)
+          else ...[
+            const Text(
+              '投注明细（按比赛场次）',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
             ),
-          ...groups.map(_matchGroup),
+            const SizedBox(height: 4),
+            if (n > 1)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  '同一场比赛的多个选项是复式备选，一注最多取其中一个。',
+                  style: TextStyle(color: muted, fontSize: 11),
+                ),
+              ),
+            ...groups.map(_matchGroup),
+          ],
           const SizedBox(height: 20),
           OutlinedButton.icon(
             onPressed: _deleting ? null : _delete,
@@ -246,6 +312,235 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
             Text('倍数 $multiple',
                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// 任九按体彩单子的写法展示：整期 14 场一行一场，只有 3/1/0，未选的写
+  /// "-"，不显示赔率。
+  Widget _renjiuSection(Plan p) {
+    final groups = groupLegs(p.legs);
+    final byPair = <String, List<Leg>>{
+      for (final g in groups) _pair(g.homeTeam, g.awayTeam): g.legs,
+    };
+    final rows = <Widget>[];
+    if (_issueMatches.isNotEmpty) {
+      for (var i = 0; i < _issueMatches.length; i++) {
+        final m = _issueMatches[i];
+        final home = m['home_team']?.toString() ?? '';
+        final away = m['away_team']?.toString() ?? '';
+        rows.add(
+          _renjiuRow(
+            index: i,
+            num: m['num']?.toString() ?? '',
+            home: home,
+            away: away,
+            legs: byPair[_pair(home, away)] ?? const [],
+            score: m['score']?.toString() ?? '',
+          ),
+        );
+      }
+    } else {
+      for (var i = 0; i < groups.length; i++) {
+        final g = groups[i];
+        rows.add(
+          _renjiuRow(
+            index: i,
+            num: g.legs.first.matchNum,
+            home: g.homeTeam,
+            away: g.awayTeam,
+            legs: g.legs,
+            score: '',
+          ),
+        );
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _issueMatches.isEmpty
+                    ? p.title
+                    : '${p.title} · ${_issueMatches.length} 场',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
+            ),
+            if (_issueLoading)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Card(
+          margin: EdgeInsets.zero,
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                color: const Color(0xFF0B3B34),
+                child: const Row(
+                  children: [
+                    SizedBox(
+                      width: 46,
+                      child: Text(
+                        '场次',
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        '对阵',
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                      ),
+                    ),
+                    Text(
+                      '310',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (rows.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    '暂无赛程数据',
+                    style: TextStyle(color: muted, fontSize: 12),
+                  ),
+                )
+              else
+                ...rows,
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          '3 = 主胜，1 = 平局，0 = 客胜；"-" 表示该场未选。'
+          '任九为浮动奖，奖金以官方开奖为准。',
+          style: TextStyle(color: muted, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  Widget _renjiuRow({
+    required int index,
+    required String num,
+    required String home,
+    required String away,
+    required List<Leg> legs,
+    required String score,
+  }) {
+    final selected = legs.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: index.isEven ? const Color(0xFFF6F8F7) : Colors.white,
+        border: const Border(
+          bottom: BorderSide(color: Color(0xFFEDF1EF)),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 46,
+            child: Text(
+              num.isEmpty ? '-' : '第$num场',
+              style: TextStyle(
+                color: selected ? const Color(0xFF17211F) : muted,
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    '$home VS $away',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected ? const Color(0xFF17211F) : muted,
+                    ),
+                  ),
+                ),
+                if (score.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    score,
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _renjiuDigits(legs),
+        ],
+      ),
+    );
+  }
+
+  Widget _renjiuDigits(List<Leg> legs) {
+    const order = {'home': 0, 'draw': 1, 'away': 2};
+    final picks = legs.where((l) => order.containsKey(l.pick)).toList()
+      ..sort((a, b) => order[a.pick]!.compareTo(order[b.pick]!));
+    if (picks.isEmpty) {
+      return const SizedBox(
+        width: 40,
+        child: Text(
+          '-',
+          textAlign: TextAlign.right,
+          style: TextStyle(
+            color: muted,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 40),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final l in picks)
+            Text(
+              renjiuDigit(l.pick),
+              style: TextStyle(
+                fontSize: 17,
+                height: 1.1,
+                letterSpacing: 1,
+                fontWeight: FontWeight.w800,
+                color: switch (l.result) {
+                  'hit' => green,
+                  'miss' => red,
+                  _ => const Color(0xFF17211F),
+                },
+              ),
+            ),
         ],
       ),
     );
