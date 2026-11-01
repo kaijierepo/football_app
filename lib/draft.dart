@@ -195,6 +195,13 @@ class DraftModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Drop every option of one match at once (the × on a 已选 row).
+  void removeMatch(String matchId) {
+    _legs.removeWhere((l) => l.matchId == matchId);
+    _clampUnits();
+    notifyListeners();
+  }
+
   void setUnits(Iterable<int> values) {
     _units
       ..clear()
