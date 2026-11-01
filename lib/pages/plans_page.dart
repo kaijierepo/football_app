@@ -20,9 +20,12 @@ class PlansPage extends StatefulWidget {
 }
 
 class _PlansPageState extends State<PlansPage> {
+  static const List<String> _weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
   bool _loading = true;
   String? _error;
   List<Plan> _plans = [];
+  DateTime _selectedDay = DateUtils.dateOnly(DateTime.now());
   Timer? _pollTimer;
   int _pollTicks = 0;
 
@@ -82,6 +85,7 @@ class _PlansPageState extends State<PlansPage> {
 
   @override
   Widget build(BuildContext context) {
+    final dayPlans = _plansForDay(_selectedDay);
     return Scaffold(
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -93,19 +97,22 @@ class _PlansPageState extends State<PlansPage> {
               // finish, and a short list cannot be pulled unless the physics
               // always allow overscroll.
               onRefresh: () => _load(silent: true),
-              child: _plans.isEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        SizedBox(height: 200),
-                        EmptyBox('还没有方案。点右下角「＋」新建。'),
-                      ],
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(12),
+                children: [
+                  _daySelector(),
+                  if (dayPlans.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 120),
+                      child: EmptyBox('这天还没有方案'),
                     )
-                  : ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.all(12),
-                      children: _groupedCards(),
-                    ),
+                  else ...[
+                    _dayHeader(dayPlans),
+                    ...dayPlans.map(_planCard),
+                  ],
+                ],
+              ),
             ),
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
@@ -174,29 +181,94 @@ class _PlansPageState extends State<PlansPage> {
     }
   }
 
-  /// 方案按天分组：每天一个日期头（星期、方案数、当日盈亏），下面跟当天方案。
-  List<Widget> _groupedCards() {
-    final byDay = <String, List<Plan>>{};
-    for (final p in _plans) {
-      final day = p.createdAt.length >= 10
-          ? p.createdAt.substring(0, 10)
-          : '未知日期';
-      byDay.putIfAbsent(day, () => []).add(p);
-    }
-    final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
-    final widgets = <Widget>[];
-    for (final day in days) {
-      final plans = byDay[day]!;
-      widgets.add(_dayHeader(day, plans));
-      widgets.addAll(plans.map(_planCard));
-    }
-    return widgets;
+  static String _dayKey(DateTime day) =>
+      '${day.year.toString().padLeft(4, '0')}-'
+      '${day.month.toString().padLeft(2, '0')}-'
+      '${day.day.toString().padLeft(2, '0')}';
+
+  /// Plans are created on the day they are bought, so "today" is the natural
+  /// default. Older days stay reachable through the arrows or the calendar.
+  List<Plan> _plansForDay(DateTime day) {
+    final key = _dayKey(day);
+    return _plans
+        .where(
+          (p) => p.createdAt.length >= 10 && p.createdAt.substring(0, 10) == key,
+        )
+        .toList();
   }
 
-  Widget _dayHeader(String day, List<Plan> plans) {
-    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    final dt = DateTime.tryParse(day);
-    final weekday = dt == null ? '' : weekdays[dt.weekday - 1];
+  void _shiftDay(int delta) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final next = DateUtils.dateOnly(_selectedDay.add(Duration(days: delta)));
+    if (next.isAfter(today)) return;
+    setState(() => _selectedDay = next);
+  }
+
+  Future<void> _pickDay() async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    var first = today.subtract(const Duration(days: 365));
+    for (final p in _plans) {
+      final day = p.createdAt.length >= 10
+          ? DateTime.tryParse(p.createdAt.substring(0, 10))
+          : null;
+      if (day != null && day.isBefore(first)) first = DateUtils.dateOnly(day);
+    }
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDay.isAfter(today) ? today : _selectedDay,
+      firstDate: first,
+      lastDate: today,
+      helpText: '选择方案日期',
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedDay = DateUtils.dateOnly(picked));
+    }
+  }
+
+  /// 日期选择条：左右切换，中间点开日历，默认停在今天。
+  Widget _daySelector() {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final isToday = DateUtils.isSameDay(_selectedDay, today);
+    return Row(
+      children: [
+        IconButton(
+          tooltip: '前一天',
+          onPressed: () => _shiftDay(-1),
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Expanded(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: _pickDay,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '${_dayKey(_selectedDay)} ${_weekdays[_selectedDay.weekday - 1]}',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.calendar_month, size: 18, color: muted),
+                ],
+              ),
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: '后一天',
+          onPressed: isToday ? null : () => _shiftDay(1),
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
+    );
+  }
+
+  Widget _dayHeader(List<Plan> plans) {
     var net = 0.0;
     var settled = 0;
     for (final p in plans) {
@@ -206,24 +278,15 @@ class _PlansPageState extends State<PlansPage> {
       settled++;
     }
     return Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      padding: const EdgeInsets.only(top: 2, bottom: 10),
       child: Row(
         children: [
-          Text(
-            day,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-          ),
-          if (weekday.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Text(weekday, style: const TextStyle(color: muted, fontSize: 12)),
-          ],
-          const Spacer(),
           Text(
             '${plans.length} 个方案',
             style: const TextStyle(color: muted, fontSize: 12),
           ),
-          if (settled > 0) ...[
-            const SizedBox(width: 8),
+          const Spacer(),
+          if (settled > 0)
             Text(
               '${net >= 0 ? '+' : '-'}${net.abs().toStringAsFixed(2)} 元',
               style: TextStyle(
@@ -236,7 +299,6 @@ class _PlansPageState extends State<PlansPage> {
                     : muted,
               ),
             ),
-          ],
         ],
       ),
     );
