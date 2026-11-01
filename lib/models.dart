@@ -442,6 +442,31 @@ class MatchEvent {
       extra != null && extra! > 0 ? "$minute+$extra'" : "$minute'";
 }
 
+/// One home/away comparison row (possession, shots, corners…) in 实况.
+class MatchStat {
+  MatchStat.fromJson(Map<String, dynamic> j)
+    : type = _s(j['type']),
+      homeText = _statText(j['home']),
+      awayText = _statText(j['away']),
+      homeValue = _statValue(j['home']),
+      awayValue = _statValue(j['away']);
+
+  final String type, homeText, awayText;
+  final double? homeValue, awayValue;
+
+  /// API-Football returns ints, percentages ("55%") or null.
+  static String _statText(dynamic v) {
+    if (v == null) return '-';
+    if (v is num) return v.round().toString();
+    return _s(v);
+  }
+
+  static double? _statValue(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(_s(v).replaceAll('%', '').trim());
+  }
+}
+
 /// Live state + event feed for one match.
 class LiveMatchInfo {
   LiveMatchInfo.fromJson(Map<String, dynamic> j)
@@ -451,6 +476,7 @@ class LiveMatchInfo {
       homeGoals = j['home_goals'] is num ? _i(j['home_goals']) : null,
       awayGoals = j['away_goals'] is num ? _i(j['away_goals']) : null,
       events = _events(j['events']),
+      stats = _stats(j['stats']),
       error = _s(j['error']);
 
   static const Set<String> _liveStatuses = {
@@ -461,12 +487,21 @@ class LiveMatchInfo {
   final int? elapsed, homeGoals, awayGoals;
   final bool isLive;
   final List<MatchEvent> events;
+  final List<MatchStat> stats;
 
   static List<MatchEvent> _events(dynamic v) {
     if (v is! List) return const [];
     return v
         .whereType<Map>()
         .map((e) => MatchEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  static List<MatchStat> _stats(dynamic v) {
+    if (v is! List) return const [];
+    return v
+        .whereType<Map>()
+        .map((e) => MatchStat.fromJson(Map<String, dynamic>.from(e)))
         .toList();
   }
 }

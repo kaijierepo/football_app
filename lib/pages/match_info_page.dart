@@ -308,6 +308,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
   Widget _liveTab(Match m) {
     final live = _live;
     final events = live?.events ?? const <MatchEvent>[];
+    final feed = live == null ? const <_FeedItem>[] : _liveFeed(m, live);
     return RefreshIndicator(
       onRefresh: () async {
         await Future.wait([_loadLive(force: true), _loadInfo(force: true)]);
@@ -317,6 +318,12 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         padding: const EdgeInsets.all(14),
         children: [
           _liveHeader(m, live),
+          if (live != null && live.stats.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _sectionTitle('技术统计', Icons.insights, gold),
+            const SizedBox(height: 8),
+            _statsBlock(m, live.stats),
+          ],
           const SizedBox(height: 18),
           _sectionTitle('实况文字转播', Icons.podcasts, red),
           const SizedBox(height: 8),
@@ -329,7 +336,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
                 ? '实况不可用：${live.error}'
                 : '暂无比赛事件：可能刚开赛，或该赛事不在 API-Football 覆盖范围。')
           else
-            ...events.map((e) => _commentaryRow(m, e)),
+            ...feed.map(_feedRow),
           const SizedBox(height: 20),
           _sectionTitle('时间线', Icons.timeline, green),
           const SizedBox(height: 8),
@@ -473,7 +480,72 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     }
   }
 
-  Widget _commentaryRow(Match m, MatchEvent e) {
+  static const Set<String> _startedStatuses = {
+    '1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT', 'SUSP',
+    'FT', 'AET', 'PEN',
+  };
+  static const Set<String> _finishedStatuses = {'FT', 'AET', 'PEN'};
+  static const Set<String> _secondHalfStatuses = {'2H', 'ET', 'BT', 'P'};
+
+  /// 实况 is more than the raw timeline: the same events, newest first, are
+  /// bracketed by phase markers (开球/半场/完场) so the feed reads like a live
+  /// broadcast even though API-Football has no commentary endpoint.
+  List<_FeedItem> _liveFeed(Match m, LiveMatchInfo live) {
+    final status = live.status.isNotEmpty ? live.status : m.liveStatus;
+    final started =
+        live.elapsed != null ||
+        live.events.isNotEmpty ||
+        _startedStatuses.contains(status);
+    if (!started) return const [];
+    final finished = _finishedStatuses.contains(status);
+    final secondHalf = _secondHalfStatuses.contains(status) || finished;
+    final halfTime = status == 'HT' || secondHalf;
+
+    final feed = <_FeedItem>[];
+    if (finished) feed.add(const _FeedItem('终场', '全场结束', phase: true));
+    var marked = false;
+    for (final e in live.events) {
+      if (halfTime && !marked && e.minute <= 45) {
+        if (secondHalf) {
+          feed.add(const _FeedItem("46'", '下半场开始', phase: true));
+        }
+        feed.add(const _FeedItem("45'", '半场结束', phase: true));
+        marked = true;
+      }
+      feed.add(_FeedItem(e.clock, _commentary(m, e)));
+    }
+    if (halfTime && !marked) {
+      if (secondHalf) feed.add(const _FeedItem("46'", '下半场开始', phase: true));
+      feed.add(const _FeedItem("45'", '半场结束', phase: true));
+    }
+    feed.add(const _FeedItem("0'", '比赛开始', phase: true));
+    return feed;
+  }
+
+  Widget _feedRow(_FeedItem item) =>
+      item.phase ? _phaseRow(item.text) : _commentaryRow(item.clock, item.text);
+
+  Widget _phaseRow(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(height: 1, color: Color(0xFFE3EAE5))),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              text,
+              style: const TextStyle(
+                  fontSize: 12, color: muted, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const Expanded(child: Divider(height: 1, color: Color(0xFFE3EAE5))),
+        ],
+      ),
+    );
+  }
+
+  Widget _commentaryRow(String clock, String text) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
@@ -481,13 +553,111 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         children: [
           SizedBox(
             width: 42,
-            child: Text(e.clock,
+            child: Text(clock,
                 style: const TextStyle(
                     fontSize: 12, color: muted, fontWeight: FontWeight.w600)),
           ),
           Expanded(
-            child: Text(_commentary(m, e),
-                style: const TextStyle(fontSize: 13)),
+            child: Text(text, style: const TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statsBlock(Match m, List<MatchStat> stats) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    m.homeTeam,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: green),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    m.awayTeam,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: orange),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...stats.map(_statRow),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statRow(MatchStat stat) {
+    final home = stat.homeValue ?? 0;
+    final away = stat.awayValue ?? 0;
+    final total = home + away;
+    final share = total > 0 ? home / total : 0.5;
+    final homeFlex = (share * 1000).round().clamp(1, 999);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 44,
+                child: Text(stat.homeText,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+              Expanded(
+                child: Text(
+                  stat.type,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 11.5, color: muted),
+                ),
+              ),
+              SizedBox(
+                width: 44,
+                child: Text(
+                  stat.awayText,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: homeFlex,
+                  child: Container(height: 4, color: green),
+                ),
+                Expanded(
+                  flex: 1000 - homeFlex,
+                  child: Container(height: 4, color: orange),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1104,4 +1274,12 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
       ]),
     );
   }
+}
+
+/// One line of the 实况 feed: either an event or a phase marker.
+class _FeedItem {
+  const _FeedItem(this.clock, this.text, {this.phase = false});
+
+  final String clock, text;
+  final bool phase;
 }
