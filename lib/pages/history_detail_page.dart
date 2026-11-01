@@ -27,6 +27,9 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
   List<LlmPrediction> _predictions = [];
   ModelVerdicts? _verdicts;
   bool _finished = false;
+  MatchInfo? _info;
+  bool _infoLoading = false;
+  String? _infoError;
 
   @override
   void initState() {
@@ -34,6 +37,36 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
     _verdicts = widget.match.verdicts;
     _finished = widget.match.finished;
     _load();
+    _loadInfo();
+  }
+
+  /// Finished matches keep their lineups in API-Football, so the history page
+  /// can show the XI too. Demo rows have no fixture id and are skipped.
+  Future<void> _loadInfo({bool force = false}) async {
+    if (widget.match.matchId.startsWith('local|')) return;
+    if (_infoLoading || (_info != null && !force)) return;
+    setState(() {
+      _infoLoading = true;
+      _infoError = null;
+    });
+    try {
+      final matchId = Uri.encodeComponent(widget.match.matchId);
+      final data = await widget.client.get(
+        '/api/matches/$matchId/info${force ? '?refresh=1' : ''}',
+      );
+      if (!mounted) return;
+      setState(() => _info = MatchInfo.fromJson(data));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _infoError = e.toString());
+    } finally {
+      if (mounted) setState(() => _infoLoading = false);
+    }
+  }
+
+  Future<void> _refresh() async {
+    await _load();
+    await _loadInfo(force: true);
   }
 
   Future<void> _load() async {
@@ -66,11 +99,11 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
       appBar: AppBar(
         title: Text('${m.homeTeam} vs ${m.awayTeam}'),
         actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: _refresh,
         child: ListView(
           padding: const EdgeInsets.all(14),
           children: [
@@ -83,6 +116,10 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
             _sectionTitle('AI 模型预测核对', Icons.smart_toy, green),
             const SizedBox(height: 8),
             ..._llmPredictionSections(),
+            const SizedBox(height: 20),
+            _sectionTitle('首发', Icons.groups, green),
+            const SizedBox(height: 8),
+            ..._lineupWidgets(),
           ],
         ),
       ),
@@ -293,4 +330,60 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
 
   String _outcomeLabel(String pick) =>
       {'home': '主胜', 'draw': '平局', 'away': '客胜'}[pick] ?? pick;
+
+  List<Widget> _lineupWidgets() {
+    if (widget.match.matchId.startsWith('local|')) {
+      return const [EmptyBox('演示数据没有首发信息')];
+    }
+    if (_infoError != null) return [EmptyBox('首发信息加载失败：$_infoError')];
+    final info = _info;
+    if (info == null) {
+      return [
+        _infoLoading
+            ? const EmptyBox('首发信息加载中…')
+            : const EmptyBox('暂无首发信息'),
+      ];
+    }
+    if (info.lineups.isEmpty) {
+      return [EmptyBox(info.error.isNotEmpty ? '首发信息不可用：${info.error}' : '该场没有首发数据')];
+    }
+    final byTeam = <String, List<InfoRow>>{};
+    for (final r in info.lineups) {
+      if (!r.isStarting) continue;
+      byTeam.putIfAbsent(r.team.isEmpty ? '未知' : r.team, () => []).add(r);
+    }
+    if (byTeam.isEmpty) return const [EmptyBox('该场没有首发数据')];
+    return [
+      for (final entry in byTeam.entries)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(entry.key,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: entry.value
+                    .map((r) => Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF4F1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            r.number != null ? '${r.number} ${r.player}' : r.player,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
+          ),
+        ),
+    ];
+  }
 }

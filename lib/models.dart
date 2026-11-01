@@ -16,7 +16,8 @@ int _i(dynamic v) {
   return int.tryParse(v.toString()) ?? 0;
 }
 
-bool _b(dynamic v) => v == true;
+// API responses mix real JSON booleans with SQLite's 0/1 integers.
+bool _b(dynamic v) => v == true || v == 1 || v == '1' || v == 'true';
 
 /// A single match with odds + Poisson probabilities + optional settled result.
 class Match {
