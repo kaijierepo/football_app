@@ -134,12 +134,12 @@ List<BetOption> optionsFor(Match m, String market) {
     case 'correct_score':
       if (m.crs.isNotEmpty) {
         return m.crs.entries
-            .map((e) => BetOption(e.key, pickLabel[e.key] ?? '比分 ${e.key}', e.value))
+            .map((e) => BetOption(e.key, pickLabel[e.key] ?? e.key, e.value))
             .toList();
       }
       return m.topScores
           .take(5)
-          .map((s) => BetOption(s.score, '比分 ${s.score}', pct(s.probability)))
+          .map((s) => BetOption(s.score, s.score, pct(s.probability)))
           .toList();
     case 'total_goals':
       return [

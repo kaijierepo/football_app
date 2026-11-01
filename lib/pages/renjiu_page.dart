@@ -23,9 +23,6 @@ class _RenjiuPageState extends State<RenjiuPage> {
   String? _error;
   String? _notice;
   List<Map<String, dynamic>> _issues = [];
-  Map<String, dynamic> _lastDraw = const {};
-  int _updatedAt = 0;
-  int _sourceUpdatedAt = 0;
   int _issueIndex = 0;
   int _multiple = 1;
   bool _saving = false;
@@ -71,11 +68,6 @@ class _RenjiuPageState extends State<RenjiuPage> {
           .toList();
       setState(() {
         _issues = issues;
-        _lastDraw = data['last_draw'] is Map
-            ? Map<String, dynamic>.from(data['last_draw'] as Map)
-            : const {};
-        _updatedAt = (data['updated_at'] as num?)?.toInt() ?? 0;
-        _sourceUpdatedAt = (data['source_updated_at'] as num?)?.toInt() ?? 0;
         _notice = data['stale'] == true
             ? '接口暂不可用，显示缓存数据：${data['error'] ?? ''}'
             : data['error']?.toString();
@@ -104,13 +96,6 @@ class _RenjiuPageState extends State<RenjiuPage> {
     return DateTime.tryParse(iso.contains('+') ? iso : '$iso+08:00');
   }
 
-  String _clockText(int ts) {
-    if (ts <= 0) return '-';
-    final dt = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
-  }
-
   void _toggle(int num, String pick) {
     setState(() {
       final sel = _selections.putIfAbsent(_issueKey, () => {});
@@ -118,10 +103,6 @@ class _RenjiuPageState extends State<RenjiuPage> {
       if (!set.add(pick)) set.remove(pick);
       if (set.isEmpty) sel.remove(num);
     });
-  }
-
-  void _clear() {
-    setState(() => _selections[_issueKey] = {});
   }
 
   void _openHistory() {
@@ -397,6 +378,7 @@ class _RenjiuPageState extends State<RenjiuPage> {
     );
   }
 
+  /// 顶部只保留三件事：选期、智能选择、加入方案，留出更多高度给 14 场列表。
   Widget _summaryCard(List<Map<String, dynamic>> matches) {
     final issue = _issue;
     if (issue == null) return const SizedBox.shrink();
@@ -408,192 +390,180 @@ class _RenjiuPageState extends State<RenjiuPage> {
     final groupCount = counts.where((c) => c > 0).length;
     final bets = renjiuBets(counts);
     final amount = bets * 2 * _multiple;
-    final prize = _lastDraw['prize'];
-    final winners = _lastDraw['winners'];
-    final bankers = matches
-        .where((m) => _adviceOf(m)?.style == 'banker')
-        .length;
-    final doubles = matches
-        .where((m) => _adviceOf(m)?.style == 'double')
-        .length;
-    final skips = matches.where((m) => _adviceOf(m)?.style == 'skip').length;
+    final canSave =
+        bets > 0 && !_saving && !_expired && issue['status'] != 'closed';
 
     return Card(
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       color: Colors.white,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(10, 6, 6, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
+            Row(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < _issues.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ChoiceChip(
+                              visualDensity: VisualDensity.compact,
+                              label: Text(
+                                '第${_issues[i]['issue']}期'
+                                '${_issueStatusLabel(_issues[i])}',
+                              ),
+                              selected: i == _issueIndex,
+                              onSelected: (_) =>
+                                  setState(() => _issueIndex = i),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: '往期开奖',
+                  onPressed: _openHistory,
+                  icon: const Icon(Icons.history, size: 20),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
               child: Row(
                 children: [
-                  for (var i = 0; i < _issues.length; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(
-                          '第${_issues[i]['issue']}期'
-                          '${_issueStatusLabel(_issues[i])}',
-                        ),
-                        selected: i == _issueIndex,
-                        onSelected: (_) => setState(() => _issueIndex = i),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 36),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: _recommend,
+                      icon: const Icon(Icons.auto_awesome, size: 16),
+                      label: const Text('智能选择', style: TextStyle(fontSize: 13)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 36),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: canSave ? _saveFlow : null,
+                      icon: const Icon(Icons.playlist_add_check, size: 16),
+                      label: Text(
+                        _expired || issue['status'] == 'closed'
+                            ? '已截止'
+                            : (_saving ? '保存中…' : '加入方案'),
+                        style: const TextStyle(fontSize: 13),
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              '截止 ${_when(issue['sale_end'])} · 开奖 ${_when(issue['draw_time'])}'
-              '${_expired ? ' · 已截止' : ''}',
-              style: TextStyle(
-                color: _expired ? orange : muted,
-                fontSize: 12,
-                fontWeight: _expired ? FontWeight.w700 : FontWeight.w400,
-              ),
-            ),
-            Text(
-              '数据更新于 ${_clockText(_sourceUpdatedAt > 0 ? _sourceUpdatedAt : _updatedAt)}',
-              style: const TextStyle(color: muted, fontSize: 11),
-            ),
-            if (prize is num)
+            if (groupCount > 0)
               Padding(
-                padding: const EdgeInsets.only(top: 2),
+                padding: const EdgeInsets.only(top: 6, left: 2),
                 child: Text(
-                  '上期 ${_lastDraw['issue'] ?? ''} 任九单注奖金 '
-                  '${_intText(prize)} 元'
-                  '${winners is num ? ' · ${_intText(winners)} 注中奖' : ''}',
-                  style: const TextStyle(
-                    color: gold,
-                    fontSize: 12,
+                  groupCount < 9
+                      ? '已选 $groupCount 场 · 还需 ${9 - groupCount} 场'
+                      : '已选 $groupCount 场 · $bets 注 · ${_intText(amount)} 元'
+                            '${_multiple > 1 ? '（$_multiple 倍）' : ''}',
+                  style: TextStyle(
+                    color: groupCount < 9 ? orange : green,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
-            const Divider(height: 18),
-            Wrap(
-              spacing: 14,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  '已选 $groupCount 场',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                if (bankers + doubles + skips > 0) ...[
-                  Text(
-                    '稳胆 $bankers',
-                    style: const TextStyle(
-                      color: gold,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    '复式 $doubles',
-                    style: const TextStyle(
-                      color: _doubleBlue,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    '不入流 $skips',
-                    style: const TextStyle(color: muted, fontSize: 12),
-                  ),
-                ],
-                if (groupCount < 9)
-                  Text(
-                    '还需 ${9 - groupCount} 场',
-                    style: const TextStyle(
-                      color: orange,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  )
-                else
-                  Text(
-                    '共 $bets 注',
-                    style: TextStyle(
-                      color: bets > 0 ? green : muted,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                Text('金额 ${_intText(amount)} 元'),
-                _multipleStepper(),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                FilledButton.tonalIcon(
-                  onPressed: _recommend,
-                  icon: const Icon(Icons.auto_awesome, size: 18),
-                  label: const Text('按建议选 9 场'),
-                ),
-                FilledButton.icon(
-                  onPressed: (bets > 0 && !_saving && !_expired)
-                      ? _savePlan
-                      : null,
-                  icon: const Icon(Icons.playlist_add_check, size: 18),
-                  label: Text(
-                    _expired ? '已截止' : (_saving ? '保存中…' : '加入方案'),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: groupCount == 0 ? null : _clear,
-                  icon: const Icon(Icons.clear, size: 18),
-                  label: const Text('清空'),
-                ),
-                TextButton.icon(
-                  onPressed: () => _load(force: true),
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('刷新'),
-                ),
-                TextButton.icon(
-                  onPressed: _openHistory,
-                  icon: const Icon(Icons.history, size: 18),
-                  label: const Text('往期'),
-                ),
-              ],
-            ),
-            const Text(
-              '任选 9 场，每场至少选一个结果；同场多选为复式，注数自动计算。'
-              '稳胆/复式/不入流来自泊松与 DeepSeek、Kimi、GPT 的投票；'
-              '任九为浮动奖，奖金以官方开奖为准（2 元/注）。',
-              style: TextStyle(color: muted, fontSize: 11),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _multipleStepper() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          onPressed: _multiple > 1 ? () => setState(() => _multiple--) : null,
-          icon: const Icon(Icons.remove_circle_outline, size: 20),
+  /// 加入方案前确认倍数（倍数不再常驻首屏）。
+  Future<void> _saveFlow() async {
+    final selected = _selected;
+    final counts = [
+      for (final m in _matches)
+        (selected[(m['num'] as num?)?.toInt()] ?? const <String>{}).length,
+    ];
+    final bets = renjiuBets(counts);
+    var multiple = _multiple;
+    final ok = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('加入方案'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '共 $bets 注 · 单倍 ${_intText(bets * 2)} 元',
+                style: const TextStyle(color: muted, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    onPressed: multiple > 1
+                        ? () => setDialogState(() => multiple--)
+                        : null,
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                  Text(
+                    '$multiple 倍',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: multiple < 99
+                        ? () => setDialogState(() => multiple++)
+                        : null,
+                    icon: const Icon(Icons.add_circle_outline),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '合计 ${_intText(bets * 2 * multiple)} 元',
+                style: const TextStyle(
+                  color: red,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(multiple),
+              child: const Text('确定'),
+            ),
+          ],
         ),
-        Text(
-          '$_multiple 倍',
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          onPressed: _multiple < 99 ? () => setState(() => _multiple++) : null,
-          icon: const Icon(Icons.add_circle_outline, size: 20),
-        ),
-      ],
+      ),
     );
+    if (ok == null) return;
+    setState(() => _multiple = ok);
+    await _savePlan();
   }
 
   Widget _noticeBox() {
@@ -611,6 +581,7 @@ class _RenjiuPageState extends State<RenjiuPage> {
     );
   }
 
+  /// 紧凑一场：场次 + 对阵 + 稳胆/复式/不入流 + 三个选项；点卡片看 AI 详情。
   Widget _matchCard(Map<String, dynamic> m) {
     final matchNum = (m['num'] as num?)?.toInt() ?? 0;
     final selected = _selected[matchNum] ?? const <String>{};
@@ -628,13 +599,11 @@ class _RenjiuPageState extends State<RenjiuPage> {
     for (final value in probs.values) {
       if (value > maxProb) maxProb = value;
     }
-    final model = m['model'];
     final advice = _adviceOf(m);
-    final llm = _llmOf(m);
     final adviceColor = _adviceColor(advice?.style);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 8),
       color: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
@@ -642,157 +611,361 @@ class _RenjiuPageState extends State<RenjiuPage> {
             ? BorderSide(color: adviceColor.withValues(alpha: 0.55), width: 1.2)
             : BorderSide.none,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 24,
-                  height: 24,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEEF4F1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$matchNum',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '${m['league'] ?? ''} · ${m['date'] ?? ''}',
-                    style: const TextStyle(color: muted, fontSize: 12),
-                  ),
-                ),
-                if (advice != null)
-                  Container(
-                    margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: adviceColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
+      child: InkWell(
+        onTap: () => _openMatchDetail(m),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _numBadge(matchNum),
+                  const SizedBox(width: 6),
+                  Expanded(
                     child: Text(
-                      advice.available > 0
-                          ? '${advice.label} · ${advice.available}源'
-                          : advice.label,
-                      style: TextStyle(
-                        color: adviceColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                if (resultLabel.isNotEmpty)
-                  Container(
-                    margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: green.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '赛果 ${score.isNotEmpty ? '$score ' : ''}$resultLabel',
+                      '${m['home_team'] ?? ''}  vs  ${m['away_team'] ?? ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: green,
-                        fontSize: 11,
+                        fontSize: 14,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${m['home_team'] ?? ''}  vs  ${m['away_team'] ?? ''}',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-            ),
-            if (probs.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  '${model is Map ? '泊松模型' : '赔率隐含'} '
-                  '主 ${pct(probs['home']!)} · '
-                  '平 ${pct(probs['draw']!)} · 客 ${pct(probs['away']!)}'
-                  '${model is Map && model['market_blended'] == true ? '（市场校准）' : ''}',
-                  style: const TextStyle(color: muted, fontSize: 11),
-                ),
-              ),
-            if (probs.isNotEmpty || llm.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 5),
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: [
-                    if (probs.isNotEmpty)
-                      _sourceChip(model is Map ? '泊松' : '赔率', _topPick(probs)),
-                    for (final name in _llmModels)
-                      _sourceChip(_modelName(name), _llmPick(llm, name)),
+                  if (advice != null) _advicePill(advice, adviceColor),
+                  if (resultLabel.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    _resultPill(score, resultLabel),
                   ],
-                ),
+                  const Icon(Icons.chevron_right, size: 16, color: muted),
+                ],
               ),
-            if (advice != null && advice.reason.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  advice.reason,
-                  style: TextStyle(color: adviceColor, fontSize: 10),
-                ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  _miniOptionCell(
+                    label: '主胜',
+                    odds: _odds(odds['home']),
+                    favorite: probs['home'] != null && probs['home'] == maxProb,
+                    advised: advice?.picks.contains('home') ?? false,
+                    adviceColor: adviceColor,
+                    selected: selected.contains('home'),
+                    onTap: () => _toggle(matchNum, 'home'),
+                  ),
+                  const SizedBox(width: 6),
+                  _miniOptionCell(
+                    label: '平局',
+                    odds: _odds(odds['draw']),
+                    favorite: probs['draw'] != null && probs['draw'] == maxProb,
+                    advised: advice?.picks.contains('draw') ?? false,
+                    adviceColor: adviceColor,
+                    selected: selected.contains('draw'),
+                    onTap: () => _toggle(matchNum, 'draw'),
+                  ),
+                  const SizedBox(width: 6),
+                  _miniOptionCell(
+                    label: '客胜',
+                    odds: _odds(odds['away']),
+                    favorite: probs['away'] != null && probs['away'] == maxProb,
+                    advised: advice?.picks.contains('away') ?? false,
+                    adviceColor: adviceColor,
+                    selected: selected.contains('away'),
+                    onTap: () => _toggle(matchNum, 'away'),
+                  ),
+                ],
               ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _optionCell(
-                  label: '主胜',
-                  odds: _odds(odds['home']),
-                  prob: probs['home'],
-                  favorite: probs['home'] != null && probs['home'] == maxProb,
-                  advised: advice?.picks.contains('home') ?? false,
-                  adviceColor: adviceColor,
-                  selected: selected.contains('home'),
-                  onTap: () => _toggle(matchNum, 'home'),
-                ),
-                const SizedBox(width: 6),
-                _optionCell(
-                  label: '平局',
-                  odds: _odds(odds['draw']),
-                  prob: probs['draw'],
-                  favorite: probs['draw'] != null && probs['draw'] == maxProb,
-                  advised: advice?.picks.contains('draw') ?? false,
-                  adviceColor: adviceColor,
-                  selected: selected.contains('draw'),
-                  onTap: () => _toggle(matchNum, 'draw'),
-                ),
-                const SizedBox(width: 6),
-                _optionCell(
-                  label: '客胜',
-                  odds: _odds(odds['away']),
-                  prob: probs['away'],
-                  favorite: probs['away'] != null && probs['away'] == maxProb,
-                  advised: advice?.picks.contains('away') ?? false,
-                  adviceColor: adviceColor,
-                  selected: selected.contains('away'),
-                  onTap: () => _toggle(matchNum, 'away'),
-                ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _numBadge(int matchNum) => Container(
+    width: 22,
+    height: 22,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: const Color(0xFFEEF4F1),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(
+      '$matchNum',
+      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+    ),
+  );
+
+  Widget _advicePill(_Advice advice, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      advice.label,
+      style: TextStyle(
+        color: color,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+
+  Widget _resultPill(String score, String label) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: green.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      '赛果 ${score.isNotEmpty ? '$score ' : ''}$label',
+      style: const TextStyle(
+        color: green,
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+
+  /// 列表里的短选项格：只有「主胜 2.10」，高度固定。
+  Widget _miniOptionCell({
+    required String label,
+    required double? odds,
+    required bool favorite,
+    required bool advised,
+    required Color adviceColor,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final accent = selected
+        ? red
+        : (advised ? adviceColor : (favorite ? gold : const Color(0xFFE3E9E3)));
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected
+                ? red
+                : (advised
+                      ? adviceColor.withValues(alpha: 0.12)
+                      : (favorite
+                            ? gold.withValues(alpha: 0.10)
+                            : Colors.white)),
+            border: Border.all(
+              color: accent,
+              width: (selected || advised) ? 1.4 : 0.8,
+            ),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : const Color(0xFF17211F),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                odds == null ? '-' : odds.toStringAsFixed(2),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : muted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 单场详情：被收起的 AI 推荐（概率、各家模型、理由）和解说放这里。
+  void _openMatchDetail(Map<String, dynamic> m) {
+    final matchNum = (m['num'] as num?)?.toInt() ?? 0;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final selected = _selected[matchNum] ?? const <String>{};
+          final odds = m['odds'] is Map ? m['odds'] as Map : const {};
+          final probs = _probabilities(m);
+          final model = m['model'];
+          final advice = _adviceOf(m);
+          final llm = _llmOf(m);
+          final adviceColor = _adviceColor(advice?.style);
+          final result = m['result']?.toString() ?? '';
+          final score = m['score']?.toString() ?? '';
+          final resultLabel = switch (result) {
+            '3' => '主胜',
+            '1' => '平局',
+            '0' => '客胜',
+            _ => '',
+          };
+          var maxProb = -1.0;
+          for (final value in probs.values) {
+            if (value > maxProb) maxProb = value;
+          }
+          void pick(String value) {
+            _toggle(matchNum, value);
+            setSheetState(() {});
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD8E1D7),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      _numBadge(matchNum),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${m['league'] ?? ''} · ${m['date'] ?? ''}',
+                          style: const TextStyle(color: muted, fontSize: 12),
+                        ),
+                      ),
+                      if (resultLabel.isNotEmpty)
+                        _resultPill(score, resultLabel),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${m['home_team'] ?? ''}  vs  ${m['away_team'] ?? ''}',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (advice != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _advicePill(advice, adviceColor),
+                        if (advice.available > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Text(
+                              '${advice.available} 个来源同意',
+                              style: const TextStyle(color: muted, fontSize: 11),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (advice.reason.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          advice.reason,
+                          style: TextStyle(color: adviceColor, fontSize: 12),
+                        ),
+                      ),
+                  ],
+                  if (probs.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '${model is Map ? '泊松模型' : '赔率隐含'} '
+                      '主 ${pct(probs['home']!)} · '
+                      '平 ${pct(probs['draw']!)} · 客 ${pct(probs['away']!)}'
+                      '${model is Map && model['market_blended'] == true ? '（市场校准）' : ''}',
+                      style: const TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ],
+                  if (probs.isNotEmpty || llm.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (probs.isNotEmpty)
+                          _sourceChip(
+                            model is Map ? '泊松' : '赔率',
+                            _topPick(probs),
+                          ),
+                        for (final name in _llmModels)
+                          _sourceChip(_modelName(name), _llmPick(llm, name)),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      _optionCell(
+                        label: '主胜',
+                        odds: _odds(odds['home']),
+                        prob: probs['home'],
+                        favorite:
+                            probs['home'] != null && probs['home'] == maxProb,
+                        advised: advice?.picks.contains('home') ?? false,
+                        adviceColor: adviceColor,
+                        selected: selected.contains('home'),
+                        onTap: () => pick('home'),
+                      ),
+                      const SizedBox(width: 6),
+                      _optionCell(
+                        label: '平局',
+                        odds: _odds(odds['draw']),
+                        prob: probs['draw'],
+                        favorite:
+                            probs['draw'] != null && probs['draw'] == maxProb,
+                        advised: advice?.picks.contains('draw') ?? false,
+                        adviceColor: adviceColor,
+                        selected: selected.contains('draw'),
+                        onTap: () => pick('draw'),
+                      ),
+                      const SizedBox(width: 6),
+                      _optionCell(
+                        label: '客胜',
+                        odds: _odds(odds['away']),
+                        prob: probs['away'],
+                        favorite:
+                            probs['away'] != null && probs['away'] == maxProb,
+                        advised: advice?.picks.contains('away') ?? false,
+                        adviceColor: adviceColor,
+                        selected: selected.contains('away'),
+                        onTap: () => pick('away'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '点击选项选中或取消；同场多选为复式。',
+                    style: TextStyle(color: muted, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -904,11 +1077,6 @@ class _RenjiuPageState extends State<RenjiuPage> {
   }
 
   double? _odds(dynamic value) => value is num ? value.toDouble() : null;
-
-  String _when(Object? value) {
-    final s = value?.toString() ?? '';
-    return s.length >= 16 ? s.substring(5, 16) : s;
-  }
 
   String _intText(Object? value) {
     final n = value is num ? value.toInt() : null;

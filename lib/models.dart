@@ -56,6 +56,7 @@ class Match {
       crs = _odds(j['crs']),
       ttg = _odds(j['ttg']),
       hafu = _odds(j['hafu']),
+      single = _singleFlags(j['single']),
       topScores = _topScores(j['top_scores']),
       verdicts = ModelVerdicts.parse(j['verdicts']);
 
@@ -77,7 +78,25 @@ class Match {
   final bool marketBlended;
   final double? homeXg, awayXg;
   final Map<String, String> had, hhad, crs, ttg, hafu;
+
+  /// 体彩 per-pool 单关 flags (keys `had` / `hhad` / `crs` / `ttg` / `hafu`).
+  /// Empty when the feed doesn't report it (demo rows, older archives).
+  final Map<String, bool> single;
   final List<TopScore> topScores;
+
+  /// Whether this market can be bought as 单关: true / false when 体彩 says
+  /// so, null when unknown (callers should not block on null).
+  bool? singleFor(String market) {
+    final key = switch (market) {
+      'wdw' => 'had',
+      'handicap' => 'hhad',
+      'half_full' => 'hafu',
+      'correct_score' => 'crs',
+      'total_goals' => 'ttg',
+      _ => null,
+    };
+    return key == null ? null : single[key];
+  }
 
   /// Poisson pre-match snapshot graded against the final score (history rows
   /// only; null when the match has no snapshot or has not finished).
@@ -107,6 +126,14 @@ class Match {
     final out = <String, String>{};
     if (v is Map) {
       v.forEach((k, val) => out[k.toString()] = val?.toString() ?? '');
+    }
+    return out;
+  }
+
+  static Map<String, bool> _singleFlags(dynamic v) {
+    final out = <String, bool>{};
+    if (v is Map) {
+      v.forEach((k, val) => out[k.toString().toLowerCase()] = _b(val));
     }
     return out;
   }

@@ -312,7 +312,6 @@ class _DraftSheet extends StatefulWidget {
 class _DraftSheetState extends State<_DraftSheet> {
   late Set<int> _units;
   late int _multiple;
-  final Set<String> _editing = {};
   bool _saving = false;
 
   @override
@@ -327,6 +326,13 @@ class _DraftSheetState extends State<_DraftSheet> {
 
   String _unitLabel(int u) => u <= 1 ? '单关' : '$u关';
 
+  /// Legs whose 体彩 pool is explicitly 串关-only (单关 not sold).
+  List<DraftLeg> get _singleBlocked => [
+    for (final l in draft.legs)
+      if (widget.matches[l.matchId]?.singleFor(l.market) == false) l,
+  ];
+  bool get _singleOk => _singleBlocked.isEmpty;
+
   void _setUnits(Set<int> next) {
     setState(() => _units = next);
     draft.setUnits(next);
@@ -336,8 +342,18 @@ class _DraftSheetState extends State<_DraftSheet> {
     final legs = draft.legs;
     final n = draft.matchCount;
     if (legs.isEmpty || n == 0) return;
-    setState(() => _saving = true);
     final units = _sortedUnits.isEmpty ? [n] : _sortedUnits;
+    if (units.contains(1) && !_singleOk) {
+      final blocked = _singleBlocked.first;
+      final message = n < 2
+          ? '该场不支持单关，请至少选择两场比赛'
+          : '「${blocked.homeTeam} vs ${blocked.awayTeam}」等场次不支持单关，请改为串关（至少 2 场）';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+    setState(() => _saving = true);
     draft
       ..stake = 2
       ..multiple = _multiple
@@ -376,12 +392,11 @@ class _DraftSheetState extends State<_DraftSheet> {
           }
           final units = _sortedUnits;
           final totals = _draftTotals(units, multiple: _multiple);
-          return ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.9,
-            ),
+          final media = MediaQuery.of(context);
+          return SizedBox(
+            // 整张选单固定占 9 成屏高，内容区尽量高；加减选项不会改变面板高度。
+            height: media.size.height * 0.9 - media.padding.bottom,
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 6, 0),
@@ -409,25 +424,26 @@ class _DraftSheetState extends State<_DraftSheet> {
                   ),
                 ),
                 const Divider(height: 1),
-                Flexible(
+                Expanded(
                   child: legs.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 48),
+                      ? const Center(
                           child: Text(
                             '还没有选项，点比赛下方的赔率即可加入。',
                             style: TextStyle(color: muted, fontSize: 13),
                           ),
                         )
                       : ListView(
-                          shrinkWrap: true,
-                          padding: const EdgeInsets.fromLTRB(6, 4, 12, 8),
+                          padding: const EdgeInsets.fromLTRB(6, 2, 12, 6),
                           children: [
                             for (final entry in groups.entries)
                               _matchGroup(entry.key, entry.value),
                           ],
                         ),
                 ),
-                if (n > 0) _unitsRow(),
+                if (n > 0) ...[
+                  if (_units.contains(1) && !_singleOk) _singleWarning(),
+                  _unitsRow(),
+                ],
                 _footer(totals),
               ],
             ),
@@ -440,9 +456,8 @@ class _DraftSheetState extends State<_DraftSheet> {
   Widget _matchGroup(String matchId, List<DraftLeg> legs) {
     final first = legs.first;
     final match = widget.matches[matchId];
-    final editing = _editing.contains(matchId);
     return Padding(
-      padding: const EdgeInsets.only(left: 10, top: 6, bottom: 6),
+      padding: const EdgeInsets.only(left: 8, top: 2, bottom: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -452,7 +467,7 @@ class _DraftSheetState extends State<_DraftSheet> {
                 visualDensity: VisualDensity.compact,
                 tooltip: '删除这场',
                 onPressed: () => draft.removeMatch(matchId),
-                icon: const Icon(Icons.close, size: 18, color: muted),
+                icon: const Icon(Icons.close, size: 16, color: muted),
               ),
               Expanded(
                 child: Text(
@@ -461,42 +476,45 @@ class _DraftSheetState extends State<_DraftSheet> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
               if (match != null)
                 TextButton(
-                  onPressed: () => setState(() {
-                    if (!_editing.remove(matchId)) _editing.add(matchId);
-                  }),
-                  style: TextButton.styleFrom(foregroundColor: muted),
+                  // 修改跳到详情页的「投注选项」，在那边的完整选项里改。
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MatchInfoPage(
+                        client: widget.client,
+                        match: match,
+                        initialTab: 1,
+                      ),
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: muted,
+                    minimumSize: const Size(0, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('修改', style: TextStyle(fontSize: 12)),
-                      Icon(
-                        editing ? Icons.expand_less : Icons.expand_more,
-                        size: 16,
-                      ),
+                    children: const [
+                      Text('修改', style: TextStyle(fontSize: 11)),
+                      Icon(Icons.chevron_right, size: 14),
                     ],
                   ),
                 ),
             ],
           ),
           Padding(
-            padding: const EdgeInsets.only(left: 34, top: 2),
+            padding: const EdgeInsets.only(left: 30, top: 1),
             child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (match != null && editing)
-                  for (final leg in _optionsFor(match))
-                    _optionChip(leg, selected: draft.contains(leg))
-                else
-                  for (final leg in legs) _pickCard(leg),
-              ],
+              spacing: 6,
+              runSpacing: 6,
+              children: [for (final leg in legs) _pickCard(leg)],
             ),
           ),
         ],
@@ -504,120 +522,69 @@ class _DraftSheetState extends State<_DraftSheet> {
     );
   }
 
-  /// Every bettable option of a board match (胜平负 + 让球), as the 修改 list.
-  List<DraftLeg> _optionsFor(Match m) {
-    final out = <DraftLeg>[];
-    for (final market in [
-      'wdw',
-      if (m.hhad.isNotEmpty) 'handicap',
-    ]) {
-      for (final o in optionsFor(m, market)) {
-        out.add(
-          DraftLeg(
-            matchId: m.matchId,
-            matchNum: m.matchNum,
-            homeTeam: m.homeTeam,
-            awayTeam: m.awayTeam,
-            market: market,
-            pick: o.value,
-            line: o.line ?? '',
-            odds: o.odds,
-            label: o.label,
-          ),
-        );
-      }
-    }
-    return out;
-  }
-
-  Widget _optionChip(DraftLeg leg, {required bool selected}) {
-    return InkWell(
-      onTap: () => draft.toggle(leg),
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? red : Colors.white,
-          border: Border.all(
-            color: selected ? red : const Color(0xFFE3E9E3),
-            width: 0.8,
-          ),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          '${legPickLabel(leg.market, leg.pick, leg.label)}'
-          '${leg.odds.isEmpty ? '' : ' ${leg.odds}'}',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: selected ? Colors.white : const Color(0xFF17211F),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// One selected pick, drawn like the 体彩 slip: a vertical 玩法 tab plus
-  /// the pick in red and its odds under it. Tapping removes it.
+  /// the pick in red and its odds under it. Tapping removes it. Every card is
+  /// the same size so a row lines up.
   Widget _pickCard(DraftLeg leg) {
     final label = marketShort[leg.market] ?? leg.market;
     return InkWell(
       onTap: () => draft.toggle(leg),
       borderRadius: BorderRadius.circular(6),
-      child: IntrinsicHeight(
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xFFE3E9E3)),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 18,
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                decoration: BoxDecoration(
-                  color: marketColor(leg.market),
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(5),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    for (final ch in label.split(''))
-                      Text(
-                        ch,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          height: 1.15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                  ],
+      child: Container(
+        width: 92,
+        height: 50,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFE3E9E3)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 18,
+              height: double.infinity,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: marketColor(leg.market),
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(5),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (final ch in label.split(''))
                     Text(
-                      legPickLabel(leg.market, leg.pick, leg.label),
+                      ch,
                       style: const TextStyle(
-                        color: red,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        fontSize: 9,
+                        height: 1.15,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        legPickLabel(leg.market, leg.pick, leg.label),
+                        style: const TextStyle(
+                          color: red,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 1),
                     Text(
                       leg.odds.isEmpty ? '-' : leg.odds,
                       style: const TextStyle(color: muted, fontSize: 12),
@@ -625,12 +592,28 @@ class _DraftSheetState extends State<_DraftSheet> {
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
+
+  /// 单关被选中但所选场次里有体彩未开单关的比赛。
+  Widget _singleWarning() => Container(
+    margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: orange.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Text(
+      draft.matchCount < 2
+          ? '该场不支持单关，请至少选择两场比赛。'
+          : '所选场次中有不支持单关的比赛：单关仅限标「单关」的场次，其余至少 2 场串关。',
+      style: const TextStyle(color: orange, fontSize: 11),
+    ),
+  );
 
   Widget _unitsRow() {
     final n = draft.matchCount;
@@ -664,6 +647,16 @@ class _DraftSheetState extends State<_DraftSheet> {
                     }
                     _setUnits(next);
                   },
+                ),
+              ),
+            ),
+          if (!_singleOk)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.only(right: 12),
+                child: Text(
+                  '部分场次仅支持串关',
+                  style: TextStyle(fontSize: 11, color: orange),
                 ),
               ),
             ),
@@ -827,13 +820,41 @@ class MatchCard extends StatelessWidget {
     );
   }
 
+  /// 体彩只对部分场次开单关，标在玩法名后面。
+  static Widget singleTag() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+    decoration: BoxDecoration(
+      color: gold.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: const Text(
+      '单关',
+      style: TextStyle(color: gold, fontSize: 9, fontWeight: FontWeight.w700),
+    ),
+  );
+
   Widget _quickRow(Match m, String title, String market) {
     final opts = optionsFor(m, market);
     return Row(
       children: [
         SizedBox(
-          width: 84,
-          child: Text(title, style: const TextStyle(fontSize: 11, color: muted)),
+          width: 92,
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: muted),
+                ),
+              ),
+              if (m.singleFor(market) == true) ...[
+                const SizedBox(width: 3),
+                singleTag(),
+              ],
+            ],
+          ),
         ),
         Expanded(
           child: Row(

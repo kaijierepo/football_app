@@ -11,10 +11,18 @@ import '../widgets.dart';
 import 'draft_page.dart';
 
 class MatchInfoPage extends StatefulWidget {
-  const MatchInfoPage({super.key, required this.client, required this.match});
+  const MatchInfoPage({
+    super.key,
+    required this.client,
+    required this.match,
+    this.initialTab = 0,
+  });
 
   final ApiClient client;
   final Match match;
+
+  /// 0 = 模型预测/实况, 1 = 投注选项, 2 = 近期战绩, 3 = 伤病, 4 = 首发.
+  final int initialTab;
 
   @override
   State<MatchInfoPage> createState() => _MatchInfoPageState();
@@ -244,6 +252,7 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
     final m = widget.match;
     return DefaultTabController(
       length: 5,
+      initialIndex: widget.initialTab,
       child: Scaffold(
         appBar: AppBar(
           title: Text('${m.homeTeam} vs ${m.awayTeam}'),
@@ -820,6 +829,11 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
         ),
         const SizedBox(height: 18),
         _sectionTitle('投注选项', Icons.receipt_long, orange),
+        const SizedBox(height: 4),
+        const Text(
+          '体彩仅对部分场次开售单关；标「单关」的玩法可单场投注，其余需与其他场次串关。',
+          style: TextStyle(color: muted, fontSize: 11),
+        ),
         const SizedBox(height: 8),
         ..._bettingSections(m),
       ],
@@ -1038,8 +1052,31 @@ class _MatchInfoPageState extends State<MatchInfoPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          Row(
+            children: [
+              Text(title,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 13)),
+              if (m.singleFor(mk) == true) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: gold.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: const Text(
+                    '单关',
+                    style: TextStyle(
+                        color: gold,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ],
+          ),
           const SizedBox(height: 4),
           GridView(
             shrinkWrap: true,

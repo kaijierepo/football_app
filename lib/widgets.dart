@@ -113,7 +113,8 @@ String lineShort(dynamic line) {
 String selectionLabel(String market, String pick, [dynamic line]) {
   switch (market) {
     case 'correct_score':
-      return pickLabel[pick] ?? '比分 $pick';
+      // 选项本身就是比分（2-1），说明标签里已有「比分」，不再重复。
+      return pickLabel[pick] ?? pick;
     case 'total_goals':
       return pick == '7+' ? '7+球' : '$pick球';
     case 'over_under':
@@ -132,6 +133,8 @@ String selectionLabel(String market, String pick, [dynamic line]) {
 String legReason(String market, String pick, String label) {
   final text = label.trim();
   if (text.isEmpty || text == pick) return '';
+  // 旧方案把比分选项存成「比分 2-1」，和选项本身重复，不算说明。
+  if (market == 'correct_score' && text == '比分 $pick') return '';
   if (text == selectionLabel(market, pick)) return '';
   if (text == (pickLabel[pick] ?? '')) return '';
   return text;
@@ -140,7 +143,7 @@ String legReason(String market, String pick, String label) {
 /// Human label for a leg's pick given its market.
 String legPickLabel(String market, String pick, String label) {
   if (market == 'correct_score') {
-    return pickLabel[pick] ?? '比分 $pick';
+    return pickLabel[pick] ?? pick;
   }
   if (market == 'total_goals') {
     return pick == '7+' ? '7+球' : '$pick球';
