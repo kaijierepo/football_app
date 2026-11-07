@@ -28,6 +28,8 @@ class _PlansPageState extends State<PlansPage> {
   DateTime _selectedDay = DateUtils.dateOnly(DateTime.now());
   Timer? _pollTimer;
   int _pollTicks = 0;
+  Timer? _importTimer;
+  int _importTicks = 0;
 
   @override
   void initState() {
@@ -38,6 +40,7 @@ class _PlansPageState extends State<PlansPage> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _importTimer?.cancel();
     super.dispose();
   }
 
@@ -83,6 +86,47 @@ class _PlansPageState extends State<PlansPage> {
     });
   }
 
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// 截图导入在服务端后台识别；这里轮询任务状态，完成后刷新方案列表。
+  void _watchImport(String jobId) {
+    _importTimer?.cancel();
+    _importTicks = 0;
+
+    Future<void> check() async {
+      _importTicks++;
+      String status = '';
+      try {
+        final data = await widget.client.get('/api/plans/import/$jobId');
+        status = '${data['status'] ?? ''}';
+        if (!mounted) return;
+        if (status == 'done') {
+          await _load(silent: true);
+          _snack('截图方案已生成');
+          return;
+        }
+        if (status == 'failed') {
+          await _load(silent: true);
+          _snack('截图识别失败：${data['error'] ?? '未知错误'}');
+          return;
+        }
+      } catch (_) {
+        // 网络抖动或服务重启：继续等下一次轮询。
+      }
+      if (!mounted) return;
+      if (_importTicks >= 75) {
+        await _load(silent: true);
+        return;
+      }
+      _importTimer = Timer(const Duration(seconds: 4), check);
+    }
+
+    _importTimer = Timer(const Duration(seconds: 2), check);
+  }
+
   @override
   Widget build(BuildContext context) {
     final dayPlans = _plansForDay(_selectedDay);
@@ -122,12 +166,18 @@ class _PlansPageState extends State<PlansPage> {
             heroTag: 'importPlan',
             tooltip: '截图导入',
             onPressed: () async {
-              await Navigator.of(context).push(
+              final jobId = await Navigator.of(context).push<String>(
                 MaterialPageRoute(
                   builder: (_) => ImportPlanPage(client: widget.client),
                 ),
               );
-              _load();
+              if (!mounted) return;
+              if (jobId == null || jobId.isEmpty) {
+                _load();
+                return;
+              }
+              _snack('已提交后台识别，完成后自动生成方案');
+              _watchImport(jobId);
             },
             child: const Icon(Icons.qr_code_scanner),
           ),
