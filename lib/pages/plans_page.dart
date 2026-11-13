@@ -30,6 +30,7 @@ class _PlansPageState extends State<PlansPage> {
   int _pollTicks = 0;
   Timer? _importTimer;
   int _importTicks = 0;
+  Timer? _pendingTimer;
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _PlansPageState extends State<PlansPage> {
   void dispose() {
     _pollTimer?.cancel();
     _importTimer?.cancel();
+    _pendingTimer?.cancel();
     super.dispose();
   }
 
@@ -63,6 +65,7 @@ class _PlansPageState extends State<PlansPage> {
         _error = null;
       });
       _schedulePoll(data['syncing'] == true);
+      _maybeSchedulePendingPoll();
     } catch (e) {
       if (mounted && !silent) setState(() => _error = e.toString());
       _schedulePoll(false);
@@ -84,6 +87,22 @@ class _PlansPageState extends State<PlansPage> {
     _pollTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) _load(silent: true);
     });
+  }
+
+  /// While any plan is still 待开奖, quietly re-poll so a match that finished
+  /// after the page loaded settles on its own (server settles on each /api/plans
+  /// fetch). Stops as soon as nothing is pending, and does nothing while the
+  /// page is just showing finished plans.
+  void _maybeSchedulePendingPoll() {
+    final hasPending = _plans.any((p) => p.status == 'pending');
+    if (hasPending) {
+      _pendingTimer ??= Timer.periodic(const Duration(seconds: 30), (_) {
+        if (mounted) _load(silent: true);
+      });
+    } else {
+      _pendingTimer?.cancel();
+      _pendingTimer = null;
+    }
   }
 
   void _snack(String text) {
