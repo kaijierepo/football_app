@@ -1418,7 +1418,11 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
       _ => muted,
     };
     final date = r.playedDate;
-    final dateText = date == null ? '' : '${date.month}/${date.day}';
+    final dateText = date == null
+        ? ''
+        : '${(date.year % 100).toString().padLeft(2, '0')}/'
+              '${date.month.toString().padLeft(2, '0')}/'
+              '${date.day.toString().padLeft(2, '0')}';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(children: [
@@ -1436,7 +1440,7 @@ class _FormTabState extends State<_FormTab> with AutomaticKeepAliveClientMixin {
         ),
         const SizedBox(width: 8),
         SizedBox(
-          width: 46,
+          width: 62,
           child: Text('${r.isHome ? '主' : '客'} $dateText',
               style: const TextStyle(fontSize: 11, color: muted)),
         ),
