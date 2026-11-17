@@ -8,7 +8,8 @@ class AppConfig {
   static const String _kServer = 'server_address';
   static const String _kToken = 'api_token';
 
-  static const String defaultServer = 'http://45.205.20.212:8000';
+  static const String defaultServer = 'http://football.noods.cn';
+  static const String _legacyServer = 'http://45.205.20.212:8000';
 
   String server;
   String token;
@@ -34,8 +35,14 @@ class AppConfig {
 
   static Future<AppConfig> load() async {
     final prefs = await SharedPreferences.getInstance();
+    var server = prefs.getString(_kServer) ?? defaultServer;
+    // The old hard-coded IP was attacked and retired; migrate saved installs.
+    if (server.trim() == _legacyServer) {
+      server = defaultServer;
+      await prefs.setString(_kServer, server);
+    }
     return AppConfig(
-      server: prefs.getString(_kServer) ?? defaultServer,
+      server: server,
       token: prefs.getString(_kToken) ?? '',
     );
   }

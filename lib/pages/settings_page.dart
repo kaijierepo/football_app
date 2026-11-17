@@ -398,7 +398,7 @@ class _ServerConfigPageState extends State<_ServerConfigPage> {
             controller: _serverCtrl,
             keyboardType: TextInputType.url,
             decoration: const InputDecoration(
-              hintText: 'http://192.168.1.100:8000',
+              hintText: 'http://football.noods.cn',
               helperText: '手机需与电脑在同一 Wi-Fi；部署公网后填公网域名',
               border: OutlineInputBorder(),
             ),

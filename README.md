@@ -6,7 +6,7 @@
 ## 首次安装
 
 1. 从 [Releases](https://github.com/kaijierepo/football_app/releases/latest) 下载最新 APK 安装。
-2. 打开 APP → 设置 → 填服务器地址 `http://45.205.20.212:8000` 和 API Token
+2. 打开 APP → 设置 → 填服务器地址 `http://football.noods.cn` 和 API Token
    （服务端 `data/config.json` 的 `api_token`）。
 
 ## 自动更新
